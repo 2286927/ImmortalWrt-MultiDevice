@@ -170,6 +170,12 @@ jobs:
 
           rm -rf ./tmp* ./.config*
           cp $GITHUB_WORKSPACE/${{ env.OWRT_CFG }} .config
+          # r9修复: 25.12 APK 体系 iptables-nft 与 iptables-zz-legacy 硬互斥（均提供 iptables=1.8.10-r3，
+          # legacy iptables-mod-* 模块依赖会把 iptables-zz-legacy 拉入 world，与配方残留的 iptables-nft=y 冲突
+          # 导致 package/install Error 16）。配方为 fw3+legacy 体系（fullconenat/lean2 nat 规则均依赖 legacy），
+          # 删除 iptables-nft、显式选中 iptables-zz-legacy。
+          sed -i '/^CONFIG_PACKAGE_iptables-nft=y$/d' .config
+          grep -q '^CONFIG_PACKAGE_iptables-zz-legacy=y' .config || echo 'CONFIG_PACKAGE_iptables-zz-legacy=y' >> .config
           echo "=== meson8b 配置关键项 ==="
           grep -E "^CONFIG_TARGET_(amlogic|BOARD|SUBTARGET|PROFILE|DEVICE)" .config | head -8 || true
 
@@ -191,6 +197,12 @@ jobs:
         working-directory: /workdir/openwrt
         run: |
           make defconfig
+          # r9修复守卫: defconfig 依赖解析不得把 iptables-nft 拉回（否则与 iptables-zz-legacy APK 冲突，快速失败省 2h）
+          if grep -q '^CONFIG_PACKAGE_iptables-nft=y' .config && grep -q '^CONFIG_PACKAGE_iptables-zz-legacy=y' .config; then
+            echo "::error::iptables-nft 与 iptables-zz-legacy 同时入选（25.12 APK 互斥冲突），请检查依赖链"; exit 1
+          fi
+          echo "=== iptables 后端选择 ==="
+          grep -E "^CONFIG_PACKAGE_iptables(-zz-legacy|-nft)?=" .config || true
           echo "=== amlogic target 守卫（defconfig 后必须保留） ==="
           grep -E "^CONFIG_TARGET_amlogic=y" .config || { echo "::error::amlogic target 被 defconfig 清除，注入失败"; exit 1; }
           make download -j$(nproc)
