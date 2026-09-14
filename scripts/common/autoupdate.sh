@@ -11,6 +11,8 @@
 #   rax-autoupdate enable       启用每日自动检查
 #   rax-autoupdate disable      停用自动检查（手动 check/apply 仍可用）
 # 配置：/etc/config/autoupdate（notify_url 支持 ntfy/Bark 等 POST 文本接口）
+#   option mirror 'auto'  下载加速：auto=内置镜像列表自动降级（默认）
+#                         none=仅直连；其他值=自定义加速前缀（如 https://ghfast.top/），失败自动回退直连
 # ============================================================
 
 UCI_CFG="/etc/config/autoupdate"
@@ -28,15 +30,56 @@ get_opt() {
     sed -n "s/^[[:space:]]*option[[:space:]]*$1[[:space:]]*'\\([^']*\\)'.*/\\1/p" "$UCI_CFG" 2>/dev/null | head -n 1
 }
 
-fetch() { # fetch <url> <outfile> [timeout_sec]
+fetch_once() { # fetch_once <url> <outfile> [timeout_sec]
     local url="$1" out="$2" tmo="${3:-60}"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --connect-timeout 10 --max-time "$tmo" -o "$out" "$url"
+        curl -fsSL --connect-timeout 8 --max-time "$tmo" -o "$out" "$url"
     elif command -v uclient-fetch >/dev/null 2>&1; then
         uclient-fetch -q --timeout="$tmo" -O "$out" "$url" 2>/dev/null
     else
         return 1
     fi
+}
+
+MIRROR_MEM_FILE="/tmp/autoupdate.mirror"
+
+get_mirrors() { # 输出候选（每行一个；"-"=直连）
+    local m
+    m=$(get_opt mirror)
+    case "$m" in
+        none|direct)
+            echo "-"
+            ;;
+        auto|"")
+            # 上次成功的镜像优先（重启后记忆失效，重新探测）
+            [ -s "$MIRROR_MEM_FILE" ] && cat "$MIRROR_MEM_FILE"
+            printf '%s\n' \
+                "https://ghfast.top/" \
+                "https://gh-proxy.com/" \
+                "https://ghproxy.net/" \
+                "https://gh.llkk.cc/" \
+                "https://mirror.ghproxy.com/" \
+                "-"
+            ;;
+        *) # 自定义加速前缀优先，失败回退直连
+            printf '%s\n' "$m" "-"
+            ;;
+    esac
+}
+
+fetch() { # fetch <url> <outfile> [timeout_sec] — 多路降级：镜像前缀逐个尝试，全部失败回退直连
+    local url="$1" out="$2" tmo="${3:-60}" m u
+    for m in $(get_mirrors); do
+        if [ "$m" = "-" ]; then u="$url"; else u="${m}${url}"; fi
+        if fetch_once "$u" "$out" "$tmo"; then
+            if [ "$m" != "-" ]; then
+                echo "$m" > "$MIRROR_MEM_FILE"
+                log "经镜像加速下载成功：$m"
+            fi
+            return 0
+        fi
+    done
+    return 1
 }
 
 notify() {
@@ -146,6 +189,7 @@ do_status() {
     echo "prefix:      $(get_opt prefix)"
     echo "notify_url:  $(get_opt notify_url)"
     echo "auto_apply:  $(get_opt auto_apply)"
+    _m=$(get_opt mirror); echo "mirror:      ${_m:-auto}"
     echo "local build: $(local_run_id)"
     if [ -f "$PENDING_FILE" ]; then
         echo "pending:     build#$(cat "$PENDING_FILE" 2>/dev/null)（可执行 rax-autoupdate apply）"
