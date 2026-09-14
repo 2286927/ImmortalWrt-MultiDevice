@@ -76,6 +76,7 @@ config main 'main'
 	option prefix '${AUTOUPDATE_PREFIX}'
 	option notify_url ''
 	option auto_apply '0'
+	option mirror 'auto'
 EOF
 
     echo "${GITHUB_RUN_ID:-0}" > files/etc/autoupdate.build
