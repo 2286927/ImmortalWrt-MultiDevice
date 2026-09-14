@@ -109,6 +109,10 @@ jobs:
           mv -f target/linux/amlogic/patches-6.6 target/linux/amlogic/patches-6.12
           mv -f target/linux/amlogic/config-6.6 target/linux/amlogic/config-6.12
           mv -f target/linux/amlogic/meson8b/config-6.6 target/linux/amlogic/meson8b/config-6.12
+          # r8修复1: 6.6→6.12 跨版本 kconfig 新符号预置（r8 实证 MDIO_BUS_MUX_MESON_GXL (NEW) 提示）
+          grep -q "^CONFIG_MDIO_BUS_MUX_MESON_GXL=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_MDIO_BUS_MUX_MESON_GXL=m" >> target/linux/amlogic/meson8b/config-6.12
+          # r8修复2: 移除 kconfig 未设符号中止开关（include/kernel-build.mk），其余 6.12 新符号按默认值静默取值，防 syncconfig 交互 EOF
+          sed -i '/export FAIL_ON_UNCONFIGURED=1/d' include/kernel-build.mk
           # Kwrt 验证过的两个 6.12 冲突补丁
           rm -f target/linux/amlogic/patches-6.12/001-dts-s905d-fix-high-load.patch
           rm -f target/linux/amlogic/patches-6.12/902-use-system-LED-for-OpenWrt.patch
@@ -140,6 +144,8 @@ jobs:
         run: |
           ./scripts/feeds update -a
           bash $GITHUB_WORKSPACE/recipe/sh/RollbacktoDockerVersion.sh
+          # r8修复3: 25.12 feed dockerd 引用为 docker-v$(PKG_VERSION)，回滚 25.0.6 需还原 v 前缀（否则 codeload 404，哈希已实测匹配）
+          sed -i 's/PKG_GIT_REF:=docker-v/PKG_GIT_REF:=v/' feeds/packages/utils/dockerd/Makefile
           ./scripts/feeds install -a
 
       - name: 加载自定义配置
