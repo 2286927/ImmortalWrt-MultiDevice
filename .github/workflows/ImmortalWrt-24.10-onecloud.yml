@@ -87,7 +87,7 @@ jobs:
           git clone $RECIPE_REPO recipe
           cd recipe && git checkout $RECIPE_REF
           # 配方脚本内部的 $GITHUB_WORKSPACE/xxx 引用统一指向 recipe 子目录
-          sed -i 's|$GITHUB_WORKSPACE/\(sh\|lede6\|onecloud\|ax6\|Config\|Ubuntu\)|$GITHUB_WORKSPACE/recipe/\1|g' sh/*.sh
+          sed -E -i 's#\$GITHUB_WORKSPACE/(sh|lede6|onecloud|ax6|Config|Ubuntu)#\$GITHUB_WORKSPACE/recipe/\1#g' sh/*.sh
           dos2unix sh/*.sh
           chmod +x sh/*.sh
           echo "配方仓库: $(git log -1 --format='%h %s')"
