@@ -175,8 +175,8 @@ jobs:
           # openclash 32 位内核（修复版：统一 meta(mihomo) 内核）
           bash $GITHUB_WORKSPACE/scripts/onecloud/openclash32-fixed.sh
 
-          # python3：直接使用官方 feeds（old_coolsnowwolf_packages 已被上游删除）
-          test -d feeds/packages/lang/python3 || { echo "::error::feeds/packages/lang/python3 缺失，OpenClash 依赖无法满足"; exit 1; }
+          # python3：直接使用官方 feeds（immortalwrt/packages openwrt-25.12 分支解释器位于 lang/python/python3）
+          test -d feeds/packages/lang/python/python3 || { echo "::error::feeds/packages/lang/python/python3 缺失，OpenClash 依赖无法满足"; exit 1; }
 
           # 客户端模式网络配置
           bash $GITHUB_WORKSPACE/recipe/sh/edit_files.sh "${{ env.OWRT_IP }}" "${{ env.OWRT_SERVER_IP }}"
