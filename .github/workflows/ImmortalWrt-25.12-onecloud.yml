@@ -92,13 +92,33 @@ jobs:
           chmod +x sh/*.sh
           echo "配方仓库: $(git log -1 --format='%h %s')"
 
-      - name: 注入 amlogic target 树(核心修复)
+      - name: 注入 amlogic target 树并适配 6.12 内核(核心修复)
         working-directory: /workdir/openwrt
         run: |
-          mv $GITHUB_WORKSPACE/recipe/lede6.6/target/linux/amlogic target/linux
+          # 25.12 分支 generic 仅有 6.12 内核 → 采用 Kwrt(openwrt.ai) 验证方案：
+          # flippy amlogic 树(coolsnowwolf/lede master, 6.6 为 testing 持续维护) 6.6 补丁/配置改名 6.12
+          git clone --depth 1 https://github.com/coolsnowwolf/lede /tmp/lede-tree
+          rm -rf target/linux/amlogic
+          mv /tmp/lede-tree/target/linux/amlogic target/linux/amlogic
+          rm -rf /tmp/lede-tree
+          sed -i -e "s/KERNEL_PATCHVER:=6.18/KERNEL_PATCHVER:=6.12/" \
+                 -e "/KERNEL_TESTING_PATCHVER/d" \
+                 -e "/autocore-arm/d" \
+                 -e "s/ pci pcie//" \
+                 target/linux/amlogic/Makefile
+          mv -f target/linux/amlogic/patches-6.6 target/linux/amlogic/patches-6.12
+          mv -f target/linux/amlogic/config-6.6 target/linux/amlogic/config-6.12
+          mv -f target/linux/amlogic/meson8b/config-6.6 target/linux/amlogic/meson8b/config-6.12
+          # Kwrt 验证过的两个 6.12 冲突补丁
+          rm -f target/linux/amlogic/patches-6.12/001-dts-s905d-fix-high-load.patch
+          rm -f target/linux/amlogic/patches-6.12/902-use-system-LED-for-OpenWrt.patch
           chmod -Rf 755 target/linux/amlogic
           echo "=== amlogic target 树 ==="
-          ls -l target/linux/amlogic
+          ls target/linux/amlogic
+          echo "=== 树适配校验 ==="
+          grep "KERNEL_PATCHVER" target/linux/amlogic/Makefile
+          test -d target/linux/amlogic/patches-6.12 || { echo "::error::patches-6.12 缺失"; exit 1; }
+          test -f target/linux/amlogic/meson8b/target.mk || { echo "::error::meson8b 缺失"; exit 1; }
           echo "=== 树内核版本 ==="
           grep -E "KERNEL_PATCHVER" target/linux/amlogic/Makefile
 
@@ -142,8 +162,6 @@ jobs:
           chmod -R 777 $GITHUB_WORKSPACE/recipe/onecloud/files/mnt/sda1/aria2/download
           chmod -R 755 $GITHUB_WORKSPACE/recipe/onecloud/files/mnt/sda1/share
 
-          # nikki feed 的 mihomo-alpha/mihomo-meta Makefile 互相依赖导致 make defconfig 报递归依赖，且 config 未选任何 nikki 包，直接移除
-          rm -rf package/OpenWrt-nikki
           rm -rf ./tmp* ./.config*
           cp $GITHUB_WORKSPACE/${{ env.OWRT_CFG }} .config
           echo "=== meson8b 配置关键项 ==="
@@ -157,8 +175,8 @@ jobs:
           # openclash 32 位内核（修复版：统一 meta(mihomo) 内核）
           bash $GITHUB_WORKSPACE/scripts/onecloud/openclash32-fixed.sh
 
-          # python3：直接使用官方 feeds（Python 3 解释器位于 lang/python/python3）
-          test -d feeds/packages/lang/python/python3 || { echo "::error::feeds/packages/lang/python/python3 缺失，OpenClash 依赖无法满足"; exit 1; }
+          # python3：直接使用官方 feeds（old_coolsnowwolf_packages 已被上游删除）
+          test -d feeds/packages/lang/python3 || { echo "::error::feeds/packages/lang/python3 缺失，OpenClash 依赖无法满足"; exit 1; }
 
           # 客户端模式网络配置
           bash $GITHUB_WORKSPACE/recipe/sh/edit_files.sh "${{ env.OWRT_IP }}" "${{ env.OWRT_SERVER_IP }}"
