@@ -806,7 +806,7 @@ jobs:
         uses: actions/upload-artifact@main
         with:
           name: octopus-rootfs-24.10
-          path: openwrt/bin/targets/armsr/armv8/*rootfs.tar.gz
+          path: openwrt/bin/targets/armsr/armv8/*-generic-rootfs.tar.gz
 
       - name: 上传 bin
         uses: actions/upload-artifact@main
