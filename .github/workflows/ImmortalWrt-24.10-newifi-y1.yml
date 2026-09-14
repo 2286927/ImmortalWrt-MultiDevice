@@ -102,7 +102,8 @@ env:
   CHECKED_COMMIT_MSGS_FILE: ''
   ENABLE_KEEPALIVED: ${{ github.event.inputs.enable_keepalived || 'true' }}
   ENABLE_DOCKER: ${{ github.event.inputs.enable_docker || 'false' }}
-  ENABLE_OPENCLASH: ${{ github.event.inputs.enable_openclash || 'true' }}
+  # NEWIFI-Y1 为 16MB flash，openclash 链(ruby/libruby/luci-app-openclash/bash 等)约 10MB，固件超限失败(24.10: 23003140 > 16449536；25.12: 24576004 > 16449536)，强制关闭
+  ENABLE_OPENCLASH: 'false'
   ENABLE_WECHATPUSH: ${{ github.event.inputs.enable_wechatpush || 'false' }}
   UPLOAD_ALL_FILES: ${{ github.event.inputs.upload_all_files || 'false' }}
   LAN_IP: '172.16.7.1'
