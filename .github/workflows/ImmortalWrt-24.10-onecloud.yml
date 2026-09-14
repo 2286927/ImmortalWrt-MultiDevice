@@ -142,6 +142,8 @@ jobs:
           chmod -R 777 $GITHUB_WORKSPACE/recipe/onecloud/files/mnt/sda1/aria2/download
           chmod -R 755 $GITHUB_WORKSPACE/recipe/onecloud/files/mnt/sda1/share
 
+          # nikki feed 的 mihomo-alpha/mihomo-meta Makefile 互相依赖导致 make defconfig 报递归依赖，且 config 未选任何 nikki 包，直接移除
+          rm -rf package/OpenWrt-nikki
           rm -rf ./tmp* ./.config*
           cp $GITHUB_WORKSPACE/${{ env.OWRT_CFG }} .config
           echo "=== meson8b 配置关键项 ==="
