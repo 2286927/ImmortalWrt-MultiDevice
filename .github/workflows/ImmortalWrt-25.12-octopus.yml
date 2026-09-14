@@ -511,6 +511,21 @@ jobs:
           # 禁用 Rust
           inject_config "$GITHUB_WORKSPACE/config/rust_disable.config"
 
+      - name: 添加 keepalived-ha 插件
+        if: env.ENABLE_KEEPALIVED == 'true'
+        run: |
+          cd openwrt
+          git clone --depth=1 https://github.com/PlanetEditorX/luci-app-build.git
+          mkdir -p package/luci-app-keepalived-ha
+          cp -r luci-app-build/luci-app-keepalived-ha/* package/luci-app-keepalived-ha/
+          echo ">>> 检查 keepalived-ha 是否启用："
+          grep luci-app-keepalived-ha .config || echo "❌ keepalived-ha 未启用"
+
+      - name: 生成编译配置
+        run: |
+          cd openwrt
+          make defconfig
+
       - name: 启用 ccache
         run: |
           cd "$GITHUB_WORKSPACE/openwrt"
@@ -526,21 +541,9 @@ jobs:
 
           echo "=== 当前 ccache 配置 ==="
           grep -n "CONFIG_CCACHE" .config || echo "❌ ccache 配置写入失败"
+          echo "=== defconfig 后写入确认 ==="
+          grep -E "^CONFIG_CCACHE" .config || echo "❌ ccache 配置写入失败"
 
-      - name: 添加 keepalived-ha 插件
-        if: env.ENABLE_KEEPALIVED == 'true'
-        run: |
-          cd openwrt
-          git clone --depth=1 https://github.com/PlanetEditorX/luci-app-build.git
-          mkdir -p package/luci-app-keepalived-ha
-          cp -r luci-app-build/luci-app-keepalived-ha/* package/luci-app-keepalived-ha/
-          echo ">>> 检查 keepalived-ha 是否启用："
-          grep luci-app-keepalived-ha .config || echo "❌ keepalived-ha 未启用"
-
-      - name: 生成编译配置
-        run: |
-          cd openwrt
-          make defconfig
 
       - name: 下载源码包
         run: |
@@ -798,7 +801,7 @@ jobs:
           echo ">>> 值守升级固定资产："
           ls -l "$FIRMWARE"/autoupdate-*
 
-      - name: 上传 armsr rootfs 产物（供 s905x3 直刷打包）
+      - name: 上传 armsr rootfs 产物（供 s912 直刷打包）
         if: steps.compile.outputs.status == 'success'
         uses: actions/upload-artifact@main
         with:
@@ -1032,8 +1035,8 @@ jobs:
           retain_days: 7
           keep_minimum_runs: 2
 
-  package-s905x3:
-    name: 打包 s905x3 直刷镜像（ophub）
+  package-s912:
+    name: 打包 s912 直刷镜像（flippy）
     needs: build
     runs-on: ubuntu-24.04
     steps:
@@ -1046,11 +1049,14 @@ jobs:
           name: octopus-rootfs-25.12
           path: openwrt/bin/targets/armsr/armv8
 
-      - name: 打包 s905x3 直刷镜像
-        uses: ophub/amlogic-s9xxx-openwrt@main
-        with:
-          openwrt_board: s905x3
-          kernel_usage: stable
+      - name: 打包 s912 直刷镜像（flippy）
+        uses: ophub/flippy-openwrt-actions@main
+        env:
+          OPENWRT_ARMVIRT: openwrt/bin/targets/*/*/*.tar.gz
+          PACKAGE_SOC: s912
+          KERNEL_VERSION_NAME: 6.6.y_6.12.y
+          KERNEL_AUTO_LATEST: true
+          WHOAMI: Z-Cy
 
       - name: 生成固定命名直刷镜像
         run: |
@@ -1058,15 +1064,15 @@ jobs:
           OUT_DIR="${{ env.PACKAGED_OUTPUTPATH }}"
           echo ">>> ophub 打包产物："
           ls -lh "$OUT_DIR"
-          IMG=$(ls "$OUT_DIR"/*s905x3*.img.gz 2>/dev/null | head -n 1 || true)
+          IMG=$(ls "$OUT_DIR"/*.img.gz 2>/dev/null | head -n 1 || true)
           if [ -z "$IMG" ]; then
-            echo "❌ 未找到 ophub 打包产物"
+            echo "❌ 未找到 flippy 打包产物"
             exit 1
           fi
-          cp "$IMG" "$OUT_DIR/octopus-s905x3-25.12.img.gz"
-          ( cd "$OUT_DIR" && sha256sum "octopus-s905x3-25.12.img.gz" > "octopus-s905x3-25.12.img.gz.sha256" )
+          cp "$IMG" "$OUT_DIR/octopus-s912-25.12.img.gz"
+          ( cd "$OUT_DIR" && sha256sum "octopus-s912-25.12.img.gz" > "octopus-s912-25.12.img.gz.sha256" )
           echo ">>> 固定命名直刷镜像："
-          ls -lh "$OUT_DIR"/octopus-s905x3-*
+          ls -lh "$OUT_DIR"/octopus-s912-*
 
       - name: 上传直刷镜像到 Release
         uses: softprops/action-gh-release@v3
