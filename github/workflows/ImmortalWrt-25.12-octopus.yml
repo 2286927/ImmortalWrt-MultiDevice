@@ -1,0 +1,1082 @@
+name: ImmortalWrt-25.12-OCTOPUS
+
+on:
+  repository_dispatch:
+    types: [build_firmware]
+  # push:
+  #   branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      # device_model:
+      #   description: '选择目标设备型号'
+      #   type: choice
+      #   required: true
+      #   options:
+      #     - octopus
+      upload_bin_dir:
+        description: '上传 bin 目录'
+        type: boolean
+        required: true
+        default: true
+      upload_packages_dir:
+        description: '上传 packages 目录'
+        type: boolean
+        required: true
+        default: false
+      upload_all_files:
+        description: '上传所有固件文件'
+        type: boolean
+        required: true
+        default: false
+      repo_url:
+        description: '源仓库 URL'
+        default: 'https://github.com/immortalwrt/immortalwrt'
+        type: choice
+        options:
+          - 'https://github.com/immortalwrt/immortalwrt'
+      repo_branch:
+        description: '源仓库分支'
+        default: 'openwrt-25.12'
+        type: choice
+        options:
+          - 'openwrt-25.12'
+      config_file:
+        description: '配置文件'
+        default: 'octopus-25.12.config'
+        type: choice
+        options:
+          - 'octopus-25.12.config'
+      enable_keepalived:
+        description: '集成 keepalived'
+        type: boolean
+        required: true
+        default: false
+      enable_docker:
+        description: '集成 Docker'
+        type: boolean
+        required: true
+        default: false
+      ssh:
+        description: 'SSH connection to Actions'
+        type: boolean
+        required: true
+        default: false
+      # istore:
+      #   description: '集成iStore商店'
+      #   type: boolean
+      #   required: true
+      #   default: false
+      # enable_openclash:
+      #   description: '集成openclash'
+      #   type: boolean
+      #   required: true
+      #   default: true
+      # enable_wechatpush:
+      #   description: '集成wechatpush'
+      #   type: boolean
+      #   required: true
+      #   default: true
+
+  schedule:
+    - cron: '10 6 * * 1,4'
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  DEVICE_MODEL: ${{ github.event.inputs.device_model || 'octopus' }}
+  REPO_URL: ${{ github.event.inputs.repo_url || 'https://github.com/immortalwrt/immortalwrt' }}
+  REPO_BRANCH: ${{ github.event.inputs.repo_branch || 'openwrt-25.12' }}
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: ${{ github.event.inputs.config_file || 'octopus-25.12.config' }}
+  DIY_P1_SH: scripts/25.12/diy-part1.sh
+  DIY_P2_SH: scripts/25.12/diy-part2.sh
+  UPLOAD_BIN_DIR: ${{ github.event.inputs.upload_bin_dir }}
+  UPLOAD_PACKAGES_DIR: ${{ github.event.inputs.upload_packages_dir }}
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN  }}
+  BUILD_COMMIT_MSGS_FILE: ''
+  CHECKED_COMMIT_MSGS_FILE: ''
+  ENABLE_KEEPALIVED: ${{ github.event.inputs.enable_keepalived || 'true' }}
+  ENABLE_DOCKER: ${{ github.event.inputs.enable_docker || 'false' }}
+  ENABLE_OPENCLASH: ${{ github.event.inputs.enable_openclash || 'true' }}
+  ENABLE_WECHATPUSH: ${{ github.event.inputs.enable_wechatpush || 'false' }}
+  UPLOAD_ALL_FILES: ${{ github.event.inputs.upload_all_files || 'false' }}
+  LAN_IP: '172.16.7.1'
+  LAN_HOSTNAME: 'Octopus'
+  AUTOUPDATE_PREFIX: autoupdate-OCTOPUS-25.12
+
+jobs:
+  check-source-updates:
+    runs-on: ubuntu-24.04
+    name: 检测源码更新
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      latest_commit_message: ${{ steps.check.outputs.LATEST_COMMIT_MESSAGE }}
+    steps:
+      - name: 检出本仓库代码
+        uses: actions/checkout@v5
+
+      - name: 设置 REPO_PATH
+        run: echo "REPO_PATH=$(echo $REPO_URL | sed -E 's#https://github.com/##;s#/$##')" >> $GITHUB_ENV
+
+      - name: 获取上次源仓库检查哈希缓存
+        id: cache-sha
+        uses: actions/cache@v5
+        with:
+          path: last_checked_sha.txt
+          key: ${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-last-checked-sha
+
+      - name: 安装 GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gh
+
+      - name: 检查源仓库更新
+        id: check
+        continue-on-error: true
+        run: |
+          echo "REPO_PATH=$REPO_PATH"
+          echo "REPO_BRANCH=$REPO_BRANCH"
+
+          API_URL="https://api.github.com/repos/${REPO_PATH}/commits/${REPO_BRANCH}"
+
+          echo ">>> 请求 API: $API_URL"
+
+          RAW=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "$API_URL")
+
+          # 判断是否为有效 JSON
+          if ! echo "$RAW" | jq empty >/dev/null 2>&1; then
+            echo "❌ GitHub API 返回非 JSON（可能是 rate limit / abuse detection）"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          LATEST_SHA=$(echo "$RAW" | jq -r '.sha')
+          LATEST_MSG=$(echo "$RAW" | jq -r '.commit.message')
+
+          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+            echo "❌ 无法解析 SHA，跳过编译"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "最新 SHA: $LATEST_SHA"
+          echo "最新提交信息: $LATEST_MSG"
+
+          LAST_CHECKED_SHA=$(cat last_checked_sha.txt 2>/dev/null || echo "")
+
+          if [ "$LATEST_SHA" != "$LAST_CHECKED_SHA" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "$LATEST_SHA" > last_checked_sha.txt
+            echo "LATEST_COMMIT_MESSAGE<<EOF" >> $GITHUB_OUTPUT
+            echo "$LATEST_MSG" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: check-source-updates
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || needs.check-source-updates.outputs.should_build == 'true'
+    outputs:
+      release_tag: ${{ steps.tag.outputs.RELEASE_TAG }}
+    runs-on: ubuntu-24.04
+    name: 编译 ${{ github.event.inputs.device_model || 'octopus' }}
+    steps:
+      - name: 调试信息
+        run: |
+          echo "DEVICE_MODEL=$DEVICE_MODEL" >> $GITHUB_ENV
+          echo "DEVICE_NAME=_$DEVICE_MODEL" >> $GITHUB_ENV
+
+          echo "触发方式: ${{ github.event_name }}"
+          echo "EVENT_TRIGGER_METHOD=${{ github.event_name }}" >> $GITHUB_ENV
+
+          echo "设备型号: $DEVICE_MODEL"
+          echo "上传 bin 目录: $UPLOAD_BIN_DIR"
+          echo "上传 packages 目录: $UPLOAD_PACKAGES_DIR"
+
+      - name: 扩大磁盘空间
+        uses: easimon/maximize-build-space@v10
+        with:
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
+          root-reserve-mb: 512
+
+      - name: 检出代码
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 清理磁盘空间
+        run: |
+          # 清理预装软件
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL >/dev/null 2>&1
+
+          # 清理 Docker
+          sudo systemctl stop docker >/dev/null 2>&1 || true
+          sudo rm -rf /var/lib/docker >/dev/null 2>&1
+
+          # 清理 APT 缓存
+          sudo apt-get clean >/dev/null 2>&1 || true
+          sudo apt-get autoremove -y >/dev/null 2>&1 || true
+
+          # 清理大文件
+          sudo rm -rf /usr/local/share/powershell >/dev/null 2>&1
+          sudo rm -rf /usr/local/share/chromium >/dev/null 2>&1
+          sudo rm -rf /usr/local/share/edge >/dev/null 2>&1
+
+          # 清理日志
+          sudo rm -rf /var/log/* >/dev/null 2>&1
+
+          echo ">>> 当前磁盘空间"
+          df -hT
+
+      - name: 输出最近的 5 条提交日志
+        run: git log -n 5
+
+      - name: 设置 REPO_PATH
+        run: echo "REPO_PATH=$(echo $REPO_URL | sed -E 's#https://github.com/##;s#/$##')" >> $GITHUB_ENV
+
+      - name: 获取上次本仓库哈希缓存
+        uses: actions/cache@v5
+        with:
+          path: last_build_sha.txt
+          key: ${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-last-build-sha
+
+      - name: 获取上次源仓库哈希缓存
+        uses: actions/cache@v5
+        with:
+          path: last_checked_sha.txt
+          key: ${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-last-checked-sha
+
+      - name: 设置最新提交信息
+        run: |
+          if [ -f last_build_sha.txt ]; then
+            LAST_BUILD_SHA=$(cat last_build_sha.txt)
+            echo "读取到上次提交 SHA: $LAST_BUILD_SHA"
+          else
+            LAST_BUILD_SHA=""
+            echo "未找到 last_build_sha.txt，视为首次构建"
+          fi
+
+          # 创建提交文件
+          TEMP_FILE="$GITHUB_WORKSPACE/build_commit_msgs.txt"
+
+          # 如果是首次构建，输出全部提交
+          if [ -z "$LAST_BUILD_SHA" ]; then
+            echo "首次构建，输出全部提交日志"
+            git log --pretty=format:"%s" | awk '!a[$0]++' | sed 's/^/- /' > "$TEMP_FILE"
+          else
+            # 输出从上次构建到现在的提交
+            git log $LAST_BUILD_SHA..HEAD --pretty=format:"%s" | awk '!a[$0]++' | sed 's/^/- /' > "$TEMP_FILE"
+          fi
+
+          # 判断文件是否为空
+          if [ ! -s "$TEMP_FILE" ]; then
+            echo "本仓库无更新"
+          else
+            echo "本仓库更新信息:"
+            cat "$TEMP_FILE"
+          fi
+
+          # 写入环境变量
+          echo "BUILD_COMMIT_MSGS_FILE=$TEMP_FILE" >> $GITHUB_ENV
+
+      - name: 检查磁盘空间
+        run: |
+          MIN_SPACE=10
+          AVAILABLE=$(df -BG . | tail -1 | awk '{print $4}' | sed 's/G//')
+          if [ -z "$AVAILABLE" ] || [ "$AVAILABLE" -lt "$MIN_SPACE" ]; then
+            echo "错误：磁盘空间不足，可用空间 ${AVAILABLE}G，需至少 ${MIN_SPACE}G"
+            exit 1
+          fi
+          echo "可用磁盘空间：${AVAILABLE}G"
+
+      - name: 初始化环境
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL >/dev/null 2>&1
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+
+          sudo apt-get update -qq
+
+          sudo apt-get install -y -qq \
+            build-essential ccache cmake curl git gawk gcc-multilib g++-multilib \
+            libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev \
+            libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool \
+            ninja-build python3 python3-pyelftools rsync unzip vim wget zlib1g-dev gh help2man \
+            flex bison patch gettext lib32gcc-s1 libc6-dev-i386 libncurses-dev
+
+          sudo timedatectl set-timezone "$TZ" >/dev/null 2>&1
+          sudo mkdir -p "$GITHUB_WORKSPACE/workdir"
+          sudo chown "$USER:$GROUPS" "$GITHUB_WORKSPACE/workdir"
+
+      - name: 扩容 /tmp 到 4GB
+        run: |
+          # 如果 /tmp 本身就是 tmpfs，它会调整大小；如果不是，它会挂载一个新的
+          sudo mount -t tmpfs -o remount,size=4G /tmp || sudo mount -t tmpfs -o size=4G tmpfs /tmp
+          echo ">>> /tmp 扩容完成"
+          df -hT /tmp
+
+      - name: 克隆源码
+        working-directory: ${{ github.workspace }}/workdir
+        run: |
+          if [ -d "${{ github.workspace }}/workdir/openwrt" ]; then
+            echo "检测到 openwrt 目录已存在，正在清理..."
+            rm -rf "${{ github.workspace }}/workdir/openwrt"
+          fi
+
+          for i in {1..3}; do
+            git clone $REPO_URL -b $REPO_BRANCH openwrt && break
+            echo "克隆失败，重试 $i/3"
+            sleep 5
+          done
+
+          if [ ! -d "${{ github.workspace }}/workdir/openwrt" ]; then
+            echo "错误：源码克隆失败"
+            exit 1
+          fi
+
+          ln -sf "${{ github.workspace }}/workdir/openwrt" "${{ github.workspace }}/openwrt"
+
+      - name: 计算下载缓存键
+        run: echo "DL_CACHE_KEY=dl-${{ env.REPO_BRANCH }}-$(date +%Y%m)" >> $GITHUB_ENV
+
+      - name: 恢复 dl 源码包缓存
+        uses: actions/cache@v5
+        with:
+          path: openwrt/dl
+          key: ${{ env.DL_CACHE_KEY }}
+          restore-keys: |
+            dl-${{ env.REPO_BRANCH }}-
+
+      - name: 恢复 ccache 缓存
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ccache
+          key: ${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-ccache-${{ github.run_id }}
+          restore-keys: |
+            ${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-ccache-
+
+      - name: 验证 ccache 缓存
+        run: |
+          # 1. 检查目录是否存在且有内容
+          if [ -d ~/.cache/ccache ]; then
+            echo "缓存目录存在 ✓"
+          else
+            echo "缓存目录不存在（首次运行正常）"
+            exit 0
+          fi
+
+          # 2. 显示总大小
+          du -sh ~/.cache/ccache || echo "无法读取大小"
+
+          # 3. 显示前几个大文件/子目录
+          du -h --max-depth=1 ~/.cache/ccache 2>/dev/null | sort -hr | head -n 8 || true
+
+          # 4. ccache 自己统计的大小
+          ccache -s | grep "Cache size" || echo "ccache 未运行"
+
+          # 5. 随机检查一个典型文件
+          find ~/.cache/ccache -type f -name "*.o" -print -quit | xargs -I {} ls -lh {} 2>/dev/null || echo "无 .o 文件（首次编译正常）"
+
+      - name: 获取源码提交 SHA
+        run: |
+          if [ -f last_checked_sha.txt ]; then
+            LAST_CHECKED_SHA=$(cat last_checked_sha.txt)
+            echo "读取到上次提交 SHA: $LAST_CHECKED_SHA"
+          else
+            LAST_CHECKED_SHA=""
+            echo "未找到 last_checked_sha.txt，视为首次检查"
+          fi
+
+          cd "$GITHUB_WORKSPACE/workdir/openwrt"
+
+          TEMP_FILE="$GITHUB_WORKSPACE/checked_commit_msgs.txt"
+
+          # 判断是否首次运行
+          if [ -z "$LAST_CHECKED_SHA" ]; then
+            echo "首次运行，无历史更新记录"
+          else
+            echo "输出从 $LAST_CHECKED_SHA 到 HEAD 的提交日志"
+            git log $LAST_CHECKED_SHA..HEAD --pretty=format:"%s" \
+              | awk '!a[$0]++' | sed 's/^/- /' > "$TEMP_FILE"
+          fi
+
+          # 判断文件是否为空
+          if [ ! -s "$TEMP_FILE" ]; then
+            echo "源仓库无更新"
+          else
+            echo "源仓库更新信息:"
+            cat "$TEMP_FILE"
+          fi
+
+          # 写入环境变量供后续步骤使用
+          echo "CHECKED_COMMIT_MSGS_FILE=$TEMP_FILE" >> $GITHUB_ENV
+
+          echo "输出源仓库最近的 5 条提交日志"
+          git log -n 5
+
+          echo "存入源仓库最新提交信息到文件"
+          echo "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/workdir/last_checked_sha.txt"
+
+          # 获取当前源码 SHA
+          CURRENT_SHA=$(git rev-parse HEAD)
+          COMMIT_URL="${REPO_URL}/commit/${CURRENT_SHA}"
+          echo "当前源码提交链接: $COMMIT_URL"
+
+          # 写入环境变量
+          echo "SOURCE_COMMIT_URL=$COMMIT_URL" >> $GITHUB_ENV
+          echo "LATEST_SHA=$CURRENT_SHA" >> $GITHUB_ENV
+
+      - name: 移动源仓库哈希缓存到根目录
+        run: |
+          mv "$GITHUB_WORKSPACE/workdir/last_checked_sha.txt" ./last_checked_sha.txt
+          cat last_checked_sha.txt
+
+      - name: 加载 Feeds
+        timeout-minutes: 10
+        run: |
+          [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+          chmod +x $DIY_P1_SH
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_P1_SH
+
+      - name: 更新 Feeds
+        timeout-minutes: 30
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a >feeds_update.log 2>&1 || {
+            echo "❌ 更新 Feeds 失败"
+            tail -n 50 feeds_update.log
+            exit 1
+          }
+          ./scripts/feeds install -a >feeds_install.log 2>&1 || {
+            echo "❌ 安装 Feeds 失败"
+            tail -n 50 feeds_install.log
+            exit 1
+          }
+
+      - name: 安装iStore商店
+        if: (github.event.inputs.istore == 'true')
+        run: |
+          cd openwrt
+          echo >> feeds.conf.default
+          echo 'src-git istore https://github.com/linkease/istore;main' >> feeds.conf.default
+          ./scripts/feeds update istore
+          ./scripts/feeds install -d y -p istore luci-app-store
+
+      - name: 加载配置
+        run: |
+          # 定义注入函数
+          inject_config() {
+            local file="$1"
+            [ ! -f "$file" ] && { echo ">>> 警告: 未找到配置文件 $file"; return; }
+            echo ">>> 正在从 $file 注入配置..."
+            while IFS= read -r line; do
+              [[ -z "$line" || "$line" =~ ^# ]] && continue
+              opt=$(echo "$line" | cut -d= -f1)
+              val=$(echo "$line" | cut -d= -f2)
+              sed -i "/^$opt=/d" .config
+              echo "$opt=$val" >> .config
+            done < "$file"
+          }
+
+          # 基础文件移动
+          [ -e files ] && mv files openwrt/files
+          [ -e config/$CONFIG_FILE ] && cp config/$CONFIG_FILE openwrt/.config
+
+          cd openwrt
+
+          # 目标设备型号由 config/octopus-25.12.config 的 target 段决定（多设备仓库不再注入 mediatek 专用行）
+
+          # 执行 DIY Part2 脚本
+          chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH
+          $GITHUB_WORKSPACE/$DIY_P2_SH
+
+          # 注入功能插件配置
+          [ "$ENABLE_OPENCLASH" = "true" ] && inject_config "$GITHUB_WORKSPACE/config/openclash.config"
+          [ "$ENABLE_WECHATPUSH" = "true" ] && inject_config "$GITHUB_WORKSPACE/config/wechatpush.config"
+          [ "$ENABLE_KEEPALIVED" = "true" ] && inject_config "$GITHUB_WORKSPACE/config/keepalived.config"
+          [ "$ENABLE_DOCKER" = "true" ] && inject_config "$GITHUB_WORKSPACE/config/docker.config"
+
+          # 禁用 Rust
+          inject_config "$GITHUB_WORKSPACE/config/rust_disable.config"
+
+      - name: 添加 keepalived-ha 插件
+        if: env.ENABLE_KEEPALIVED == 'true'
+        run: |
+          cd openwrt
+          git clone --depth=1 https://github.com/PlanetEditorX/luci-app-build.git
+          mkdir -p package/luci-app-keepalived-ha
+          cp -r luci-app-build/luci-app-keepalived-ha/* package/luci-app-keepalived-ha/
+          echo ">>> 检查 keepalived-ha 是否启用："
+          grep luci-app-keepalived-ha .config || echo "❌ keepalived-ha 未启用"
+
+      - name: 生成编译配置
+        run: |
+          cd openwrt
+          make defconfig
+
+      - name: 启用 ccache
+        run: |
+          cd "$GITHUB_WORKSPACE/openwrt"
+
+          echo "=== 启用原生 ccache 支持（CONFIG_CCACHE） ==="
+          # 清理配置中可能残留的 ccache 项，统一由本步骤写入
+          sed -i '/^CONFIG_CCACHE=/d;/^CONFIG_CCACHE_DIR=/d' .config
+          { echo 'CONFIG_CCACHE=y'; echo 'CONFIG_CCACHE_DIR="/home/runner/.cache/ccache"'; } >> .config
+
+          # 提升 ccache 容量上限（默认 5G，降低工具链与软件包对象互相淘汰的概率）
+          mkdir -p ~/.config/ccache
+          echo "max_size = 6G" > ~/.config/ccache/ccache.conf
+
+          echo "=== 当前 ccache 配置 ==="
+          grep -n "CONFIG_CCACHE" .config || echo "❌ ccache 配置写入失败"
+          echo "=== defconfig 后写入确认 ==="
+          grep -E "^CONFIG_CCACHE" .config || echo "❌ ccache 配置写入失败"
+
+
+      - name: 下载源码包
+        run: |
+          cd openwrt
+          make download -j$(nproc)
+
+      - name: 获取磁盘增长缓存
+        uses: actions/cache@v5
+        with:
+          path: openwrt/disk-growth.txt
+          key: ${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-disk-growth
+
+      - name: 编译固件
+        id: compile
+        run: |
+          cd openwrt
+          echo "🚀 正在编译固件..."
+          # 创建日志文件
+          : > build.log
+
+
+          # -------------------------
+          # 磁盘增长缓存
+          # -------------------------
+          # 默认最大增长（35GB）
+          DEFAULT_MAX=$((35 * 1024 * 1024 * 1024))
+          if [ -f disk-growth.txt ]; then
+            MAX_GROWTH=$(cat disk-growth.txt)
+            echo "📁 已加载历史磁盘增长值：$(echo $((MAX_GROWTH/1024/1024/1024))) GB"
+          else
+            MAX_GROWTH=$DEFAULT_MAX
+            echo "📁 未找到历史缓存，使用默认最大增长：35GB"
+          fi
+
+          # 记录初始磁盘占用
+          START=$(df -B1 "${GITHUB_WORKSPACE}" | awk 'NR==2{print $3}')
+          # -------------------------
+          # 启动后台监控（双循环）
+          # -------------------------
+          (
+            RUNTIME_MAX=$MAX_GROWTH
+            LAST_OUTPUT_TIME=$(date +%s)
+            INTERVAL=300
+            # 颜色定义
+            RED="\033[31m"
+            GREEN="\033[32m"
+            YELLOW="\033[33m"
+            BLUE="\033[34m"
+            MAGENTA="\033[35m"
+            CYAN="\033[36m"
+            RESET="\033[0m"
+            # 事件循环：监听 build.log
+            tail -F build.log 2>/dev/null | while read -r LINE; do
+              echo "$LINE" > /tmp/last_line
+            done &
+            # -------------------------
+            # 心跳循环
+            # -------------------------
+            STAGE="${CYAN}初始化${RESET}"
+            while true; do
+              NOW=$(date +%s)
+              LINE=$(cat /tmp/last_line 2>/dev/null || echo "")
+              # -------------------------
+              # 阶段识别（根据日志内容）
+              # -------------------------
+              if echo "$LINE" | grep -qE "make\[[0-9]+\].*-C tools/"; then
+                STAGE="${CYAN}Tools (10%)${RESET}"
+              elif echo "$LINE" | grep -qE "make\[[0-9]+\].*-C toolchain/"; then
+                STAGE="${BLUE}Toolchain (25%)${RESET}"
+              elif echo "$LINE" | grep -qE "make\[[0-9]+\].*-C target/linux"; then
+                STAGE="${MAGENTA}Target (45%)${RESET}"
+              elif echo "$LINE" | grep -qE "make\[[0-9]+\].*-C package/"; then
+                STAGE="${YELLOW}Package (70%)${RESET}"
+              elif echo "$LINE" | grep -qE "make\[[0-9]+\].*-C package/install"; then
+                STAGE="${GREEN}Install (90%)${RESET}"
+              fi
+
+              # -------------------------
+              # 磁盘监控
+              # -------------------------
+              USED=$(df -B1 "${GITHUB_WORKSPACE}" | awk 'NR==2{print $3}')
+              DELTA=$((USED - START))
+              if [ $DELTA -gt $RUNTIME_MAX ]; then
+                RUNTIME_MAX=$DELTA
+              fi
+              echo "$RUNTIME_MAX" > /tmp/max_growth_runtime
+              # -------------------------
+              # 定时刷新（每 5 分钟）
+              # -------------------------
+              if [ $((NOW - LAST_OUTPUT_TIME)) -ge $INTERVAL ]; then
+                LAST_OUTPUT_TIME=$NOW
+                PERCENT=$((DELTA * 100 / RUNTIME_MAX))
+                [ $PERCENT -gt 100 ] && PERCENT=100
+                echo -e "${MAGENTA}========== ⏳ 定时刷新 ($(date '+%H:%M:%S'))  ⏳ ==========${RESET}"
+                echo -e "📦 磁盘信息：${CYAN}$(df -h "${GITHUB_WORKSPACE}" | awk 'NR==2{print $3 "/" $2 " used (" $5 ")"}')${RESET}"
+                echo -e "📊 估算进度：${YELLOW}${PERCENT}%${RESET}"
+                echo -e "📌 当前阶段：${STAGE}"
+                echo "-----------------------------------------"
+              fi
+              sleep 1
+            done
+          ) &
+          monitor_pid=$!
+
+          # -------------------------
+          # 正式编译
+          # -------------------------
+          stdbuf -oL -eL make -j$(nproc) 2>&1 | stdbuf -oL tee build.log
+          RET=${PIPESTATUS[0]}
+          kill $monitor_pid || true
+          if [ $RET -ne 0 ]; then
+            echo "❌ 编译失败！"
+            exit 1
+          fi
+          # -------------------------
+          # 自学习磁盘增长
+          # -------------------------
+          if [ -f /tmp/max_growth_runtime ]; then
+            MAX_GROWTH=$(cat /tmp/max_growth_runtime)
+          fi
+          END=$(df -B1 "${GITHUB_WORKSPACE}" | awk 'NR==2{print $3}')
+          DELTA=$((END - START))
+          THRESHOLD=$((MAX_GROWTH / 100))
+          DIFF=$((DELTA - MAX_GROWTH))
+          [ $DIFF -lt 0 ] && DIFF=$(( -DIFF ))
+          if [ ! -f disk-growth.txt ]; then
+            echo "$DELTA" > disk-growth.txt
+            echo "📁 首次运行，已初始化磁盘增长缓存：$(echo $((DELTA/1024/1024/1024))) GB"
+          elif [ "$DIFF" -gt "$THRESHOLD" ]; then
+            echo "$DELTA" > disk-growth.txt
+            echo "📁 磁盘增长变化超过 1%，已更新缓存为：$(echo $((DELTA/1024/1024/1024))) GB"
+          else
+            echo "📁 变化未超过 1%，不更新缓存"
+          fi
+
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+          echo "✅ 编译成功！"
+
+      - name: 查看 ccache 命中率和缓存大小
+        run: |
+          echo "=== ccache 统计信息 ==="
+          ccache -s || true
+
+          echo "=== ccache 目录大小 ==="
+          du -sh ~/.cache/ccache || true
+
+      - name: 上传编译日志
+        if: failure()
+        uses: actions/upload-artifact@main
+        with:
+          name: compile-log-${{ env.DEVICE_MODEL }}
+          path: |
+            openwrt/build_dir/**/log/*.log
+            openwrt/build_dir/**/*.log
+            openwrt/build_dir/**/*.txt
+            openwrt/build_dir/**/*.err
+            openwrt/build_dir/**/*.out
+            openwrt/logs/**
+            openwrt/*.log
+            openwrt/.config
+
+      - name: 提取固件版本号
+        id: version
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          cd openwrt
+          VERSION=$(git rev-parse --short HEAD || echo "unknown")
+          SAFE_VERSION="r${VERSION}"
+          echo "提取的版本号: $SAFE_VERSION"
+          echo "FIRMWARE_VERSION=$SAFE_VERSION" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: 检查磁盘
+        if: always()
+        run: |
+          df -hT
+
+      - name: 整理固件并固定文件名
+        id: organize
+        if: env.UPLOAD_FIRMWARE == 'true' && steps.compile.outputs.status == 'success'
+        run: |
+          set -e
+
+          echo "📂 当前工作目录：$(pwd)"
+          echo "📂 列出 openwrt/bin 目录："
+          ls -al openwrt/bin || echo "❌ openwrt/bin 不存在"
+
+          echo "📂 列出 openwrt/bin/targets："
+          ls -al openwrt/bin/targets || echo "❌ openwrt/bin/targets 不存在"
+
+          echo "📂 深度列出 targets 目录结构："
+          find openwrt/bin/targets -maxdepth 4 -type d 2>/dev/null || echo "❌ 未找到任何 targets 子目录"
+
+          # 找到固件目录（更稳）
+          TARGET_DIR=$(find openwrt/bin/targets -type d -mindepth 2 -maxdepth 4 | head -n 1 || true)
+
+          if [ -z "$TARGET_DIR" ]; then
+            echo "❌ 未找到 openwrt/bin/targets 下的固件目录，可能本次未生成固件"
+            exit 1
+          fi
+
+          echo "📁 进入固件目录：$TARGET_DIR"
+          cd "$TARGET_DIR"
+
+          # 移动 packages
+          [ -d packages ] && mv packages "$GITHUB_WORKSPACE"
+
+          echo "📂 固件目录内容："
+          ls -la
+
+          DEVICE_MODEL="${DEVICE_MODEL:-octopus}"
+
+          # 直刷镜像类目标（amlogic / armsr）：产物为 *.img.gz，无 sysupgrade/factory
+          FW_COUNT=$(ls *.img.gz *.img *sysupgrade* *factory* 2>/dev/null | wc -l || true)
+
+          if [ "$FW_COUNT" -eq 0 ]; then
+            echo "❌ 未找到 sysupgrade/factory/img 固件文件，无法重命名"
+            exit 1
+          fi
+
+          # 重命名固件（保留原始文件名作为后缀，前面追加设备/版本/时间标识）
+          for file in *.img.gz *.img *sysupgrade* *factory* *initramfs*; do
+            if [ -f "$file" ] && ! echo "$file" | grep -q -- "-bl2"; then
+              NEW_NAME="${DEVICE_MODEL}_${FIRMWARE_VERSION}${FILE_DATE}_${file}"
+              echo "🔧 重命名：$file → $NEW_NAME"
+              mv "$file" "$NEW_NAME"
+            fi
+          done
+
+          echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
+          echo "status=success" >> "$GITHUB_OUTPUT"
+          echo "🎉 固件整理完成"
+
+      - name: 生成值守升级固定资产
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          set -e
+          PREFIX="autoupdate-OCTOPUS-25.12"
+          # octopus 产物为直刷镜像（img.gz），固定 URL 资产以 img.gz 为源生成
+          IMG_FILE=$(ls "$FIRMWARE"/*.img.gz 2>/dev/null | head -n 1 || true)
+          [ -z "$IMG_FILE" ] && IMG_FILE=$(ls "$FIRMWARE"/*sysupgrade* 2>/dev/null | head -n 1 || true)
+          if [ -z "$IMG_FILE" ]; then
+            echo "❌ 未找到固件镜像，无法生成值守升级资产"
+            exit 1
+          fi
+          cp "$IMG_FILE" "$FIRMWARE/${PREFIX}-img.gz"
+          ( cd "$FIRMWARE" && sha256sum "${PREFIX}-img.gz" > "${PREFIX}-img.gz.sha256" )
+          {
+            echo "RUN_ID=${{ github.run_id }}"
+            echo "BUILD=${{ env.FIRMWARE_VERSION }}${{ env.FILE_DATE }}"
+            echo "DEVICE=$DEVICE_MODEL"
+            echo "BRANCH=$REPO_BRANCH"
+          } > "$FIRMWARE/${PREFIX}-version.txt"
+          echo ">>> 值守升级固定资产："
+          ls -l "$FIRMWARE"/autoupdate-*
+
+      - name: 上传 armsr rootfs 产物（供 s905x3 直刷打包）
+        if: steps.compile.outputs.status == 'success'
+        uses: actions/upload-artifact@main
+        with:
+          name: octopus-rootfs-25.12
+          path: openwrt/bin/targets/armsr/armv8/*rootfs.tar.gz
+
+      - name: 上传 bin
+        uses: actions/upload-artifact@main
+        if: steps.compile.outputs.status == 'success' && github.event_name == 'workflow_dispatch' && env.UPLOAD_BIN_DIR == 'true'
+        with:
+          name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: openwrt/bin
+
+      - name: 上传 packages
+        uses: actions/upload-artifact@main
+        if: steps.compile.outputs.status == 'success' && github.event_name == 'workflow_dispatch' && env.UPLOAD_PACKAGES_DIR == 'true'
+        with:
+          name: OpenWrt_packages${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: ${{ github.workspace }}/packages
+
+      - name: 生成标签和发布描述
+        id: tag
+        if: env.UPLOAD_RELEASE == 'true' && steps.compile.outputs.status == 'success'
+        run: |
+          set -e
+          # 验证必要变量
+          if [ -z "$DEVICE_MODEL" ] || [ -z "${{ env.FIRMWARE_VERSION }}" ]; then
+            echo "Missing required variables"
+            exit 1
+          fi
+
+          # 检查是否存在更新
+          [ -s "$BUILD_COMMIT_MSGS_FILE" ] && echo ">>> 本仓库存在更新"
+          [ -s "$CHECKED_COMMIT_MSGS_FILE" ] && echo ">>> 源仓库存在更新"
+
+          # 生成标签
+          TAG="ImmortalWrt-25.12-$DEVICE_MODEL-${{ env.FIRMWARE_VERSION }}"
+          echo "RELEASE_TAG=$TAG-$(date +%Y%m%d%H%M%S)" | tee -a $GITHUB_OUTPUT >> $GITHUB_ENV
+
+          # 生成发布说明
+          {
+            echo "## 📦 固件信息"
+            echo "固件版本: ImmortalWrt ${{ env.FIRMWARE_VERSION }}"
+            echo "设备型号: $DEVICE_MODEL"
+            echo "编译时间: $(date +'%Y-%m-%d %H:%M %Z')"
+            echo "后台地址: ${LAN_IP} 或 http://${LAN_HOSTNAME}.lan/"
+            echo "值守升级固定地址: https://github.com/${{ github.repository }}/releases/latest/download/autoupdate-OCTOPUS-25.12-img.gz"
+            echo "源代码仓库: $REPO_URL"
+            echo "源仓库分支: $REPO_BRANCH"
+            echo "源仓库提交: [查看编译时提交]($SOURCE_COMMIT_URL)"
+            echo "配置文件: $CONFIG_FILE"
+            echo "触发方式: $EVENT_TRIGGER_METHOD"
+            if [ -s "$BUILD_COMMIT_MSGS_FILE" ] || [ -s "$CHECKED_COMMIT_MSGS_FILE" ]; then
+              echo -e "\n## 📝 更新内容"
+
+              # 本仓库输出
+              if [ -s "$BUILD_COMMIT_MSGS_FILE" ]; then
+                [ -s "$CHECKED_COMMIT_MSGS_FILE" ] && echo "### 📌 本仓库更新"
+                cat "$BUILD_COMMIT_MSGS_FILE"
+              fi
+
+              # 源仓库输出
+              if [ -s "$CHECKED_COMMIT_MSGS_FILE" ]; then
+                  [ -s "$BUILD_COMMIT_MSGS_FILE" ] && echo "### 📌 源仓库更新"
+                  cat "$CHECKED_COMMIT_MSGS_FILE"
+              fi
+            fi
+            echo "## 验证固件"
+            echo "- 未验证"
+            echo "## 🔧 刷机说明"
+            echo "1. 产物为 **img.gz** 直刷镜像，使用 dd 或写卡工具写入 SD/U 盘、eMMC。"
+            echo "2. 直刷镜像不支持 sysupgrade 在线升级，升级需重新写盘。"
+          } > release
+
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: 调试输出
+        run: |
+          echo "FIRMWARE路径: ${{ env.FIRMWARE }}"
+          echo "TAG状态: ${{ steps.tag.outputs.status }}"
+          ls -la ${{ env.FIRMWARE }} || echo "输出目录不存在: ${{ env.FIRMWARE }}"
+
+      - name: 检查 release
+        run: |
+          ls -l ${{ github.workspace }}/release
+          cat ${{ github.workspace }}/release
+          if [ ! -s ${{ github.workspace }}/release ]; then
+            echo "错误：release 文件为空或不存在"
+            exit 1
+          fi
+
+      - name: 检查 tag 步骤输出
+        run: |
+          echo "tag status: ${{ steps.tag.outputs.status }}"
+          echo "RELEASE_TAG: ${{ steps.tag.outputs.RELEASE_TAG }}"
+          echo "RELEASE_TAG env: $RELEASE_TAG"
+
+      - name: 发布固件
+        uses: softprops/action-gh-release@v3
+        if: steps.tag.outputs.status == 'success'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.tag.outputs.RELEASE_TAG }}
+          body_path: release
+          files: |
+            ${{ env.UPLOAD_ALL_FILES == 'true' && format('{0}/*', env.FIRMWARE) || format('{0}/*.img.gz', env.FIRMWARE) }}
+            ${{ env.FIRMWARE }}/autoupdate-*
+
+      - name: 验证Release创建
+        run: |
+          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN  }}" \
+          https://api.github.com/repos/${{ github.repository }}/releases/tags/$RELEASE_TAG | jq .
+          if [ $? -ne 0 ]; then
+            echo "错误：Release 创建失败"
+            exit 1
+          fi
+          echo "Release 创建成功: $RELEASE_TAG"
+
+      - name: 保存本仓库哈希
+        run: |
+          echo "$(git rev-parse HEAD)" > last_build_sha.txt
+
+      - name: 校验缓存文件
+        run: |
+          echo "检查 last_build_sha.txt 文件内容"
+          if [ ! -f last_build_sha.txt ]; then
+            echo "错误：last_build_sha.txt 文件不存在"
+            exit 1
+          else
+            echo "last_build_sha.txt 文件存在"
+            cat last_build_sha.txt
+          fi
+          echo "检查 last_checked_sha.txt 文件内容"
+          if [ ! -f last_checked_sha.txt ]; then
+            echo "错误：last_checked_sha.txt 文件不存在"
+            exit 1
+          else
+            echo "last_checked_sha.txt 文件存在"
+            cat last_checked_sha.txt
+          fi
+          echo "检查 disk-growth.txt 文件内容"
+          if [ ! -f openwrt/disk-growth.txt ]; then
+            echo "错误：disk-growth.txt 文件不存在"
+            exit 1
+          else
+            echo "disk-growth.txt 文件存在"
+            cat openwrt/disk-growth.txt
+          fi
+
+      - name: 删除指定缓存
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "当前的缓存列表"
+          gh cache list
+
+          for key in \
+            "${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-last-build-sha" \
+            "${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-last-checked-sha" \
+            "${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-disk-growth" \
+            "${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-ccache"
+          do
+            echo "尝试删除缓存: $key"
+            gh cache delete "$key" --repo ${{ github.repository }} || echo "缓存 $key 不存在，跳过"
+          done
+
+      - name: 保存本仓库哈希缓存
+        uses: actions/cache@v5
+        with:
+          path: last_build_sha.txt
+          key: ${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-last-build-sha
+
+      - name: 保存源仓库哈希缓存
+        uses: actions/cache@v5
+        with:
+          path: last_checked_sha.txt
+          key: ${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-last-checked-sha
+
+      - name: 保存磁盘增长缓存
+        uses: actions/cache@v5
+        with:
+          path: openwrt/disk-growth.txt
+          key: ${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-disk-growth
+
+      - name: 保存 ccache 缓存
+        if: steps.compile.outputs.status == 'success'
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ccache
+          key: ${{ env.REPO_PATH }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_MODEL }}-ccache
+
+      - name: 清理旧 Releases
+        if: steps.tag.outputs.status == 'success'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEVICE_MODEL: ${{ env.DEVICE_MODEL }}
+          CURRENT_RELEASE: ${{ steps.tag.outputs.RELEASE_TAG }}
+        run: |
+          echo "当前设备型号: $DEVICE_MODEL"
+          echo "当前保留 Release: $CURRENT_RELEASE"
+
+          # 获取符合当前型号的所有 Release 列表
+          # 修正了过滤正则表达式，直接引用 $DEVICE_MODEL
+          RELEASES=$(gh release list --limit 100 --json name --jq ".[] | select(.name | test(\"ImmortalWrt-25.12-$DEVICE_MODEL\")) | .name")
+
+          if [ -n "$RELEASES" ]; then
+            for RELEASE in $RELEASES; do
+              # 确保不删除刚刚生成的当前 Release
+              if [ "$RELEASE" = "$CURRENT_RELEASE" ]; then
+                echo "保持当前新发布的 Release: $RELEASE"
+                continue
+              fi
+              echo "正在删除旧 Release: $RELEASE"
+              gh release delete "$RELEASE" --yes --cleanup-tag || echo "❌ 删除 Release $RELEASE 失败，跳过..."
+            done
+          else
+            echo "未发现该型号的旧 Releases，无需清理"
+          fi
+
+      - name: 清理临时文件
+        if: always()
+        run: rm -f ${{ env.BUILD_COMMIT_MSGS_FILE }} ${{ env.CHECKED_COMMIT_MSGS_FILE }}
+
+      - name: 清理旧工作流运行
+        if: steps.tag.outputs.status == 'success'
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          retain_days: 7
+          keep_minimum_runs: 2
+
+  package-s905x3:
+    name: 打包 s905x3 直刷镜像（ophub）
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 下载 armsr rootfs 产物
+        uses: actions/download-artifact@main
+        with:
+          name: octopus-rootfs-25.12
+          path: openwrt/bin/targets/armsr/armv8
+
+      - name: 打包 s905x3 直刷镜像
+        uses: ophub/amlogic-s9xxx-openwrt@main
+        with:
+          openwrt_board: s905x3
+          kernel_usage: stable
+
+      - name: 生成固定命名直刷镜像
+        run: |
+          set -e
+          OUT_DIR="${{ env.PACKAGED_OUTPUTPATH }}"
+          echo ">>> ophub 打包产物："
+          ls -lh "$OUT_DIR"
+          IMG=$(ls "$OUT_DIR"/*s905x3*.img.gz 2>/dev/null | head -n 1 || true)
+          if [ -z "$IMG" ]; then
+            echo "❌ 未找到 ophub 打包产物"
+            exit 1
+          fi
+          cp "$IMG" "$OUT_DIR/octopus-s905x3-25.12.img.gz"
+          ( cd "$OUT_DIR" && sha256sum "octopus-s905x3-25.12.img.gz" > "octopus-s905x3-25.12.img.gz.sha256" )
+          echo ">>> 固定命名直刷镜像："
+          ls -lh "$OUT_DIR"/octopus-s905x3-*
+
+      - name: 上传直刷镜像到 Release
+        uses: softprops/action-gh-release@v3
+        if: needs.build.outputs.release_tag != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.build.outputs.release_tag }}
+          files: |
+            ${{ env.PACKAGED_OUTPUTPATH }}/*
