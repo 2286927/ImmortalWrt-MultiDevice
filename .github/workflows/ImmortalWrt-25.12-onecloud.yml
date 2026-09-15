@@ -206,6 +206,10 @@ jobs:
         working-directory: /workdir/openwrt
         run: |
           make defconfig
+          # kconfig VARIANT 校正: make defconfig 把 .config 当默认建议，变体自动选择偏向 iptables，
+          # 在 defconfig 定型后强制切回 nftables（后续 syncconfig 保留显式值）
+          sed -i 's/^CONFIG_PACKAGE_miniupnpd-iptables=y$/# CONFIG_PACKAGE_miniupnpd-iptables is not set/' .config
+          grep -q '^CONFIG_PACKAGE_miniupnpd-nftables=y' .config || echo 'CONFIG_PACKAGE_miniupnpd-nftables=y' >> .config
           # r10守卫(弃用 legacy): defconfig 依赖解析不得把 legacy 后端拉回（iptables-mod-* 已禁用，出现即有残留依赖）
           if grep -qE '^CONFIG_PACKAGE_(iptables|ip6tables)-zz-legacy=y' .config; then
             echo "::error::legacy 后端被依赖链拉回（已弃用 fw3+legacy），冲突来源："; grep -E "zz-legacy" .config; exit 1
