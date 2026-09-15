@@ -146,6 +146,14 @@ jobs:
           rm -rf package/OpenWrt-nikki
           rm -rf ./tmp* ./.config*
           cp $GITHUB_WORKSPACE/${{ env.OWRT_CFG }} .config
+          # 用户决策弃用 fw3+legacy（与 25.12 对齐）：删除 legacy 后端用户态工具链，iptables 统一 nft 后端；
+          # 补 nft 原生 tproxy/socket 内核模块（fullcone 配方已有 kmod-nft-fullcone）
+          sed -i -E '/^CONFIG_PACKAGE_(iptables|ip6tables)-(mod-[a-z0-9-]+|zz-legacy|legacy)=y$/d' .config
+          grep -q '^CONFIG_PACKAGE_iptables-nft=y' .config || echo 'CONFIG_PACKAGE_iptables-nft=y' >> .config
+          grep -q '^CONFIG_PACKAGE_kmod-nft-tproxy=y' .config || echo 'CONFIG_PACKAGE_kmod-nft-tproxy=y' >> .config
+          grep -q '^CONFIG_PACKAGE_kmod-nft-socket=y' .config || echo 'CONFIG_PACKAGE_kmod-nft-socket=y' >> .config
+          echo "=== iptables 后端（弃用 legacy 后） ==="
+          grep -E "^CONFIG_PACKAGE_iptables(-nft)?=" .config || true
           echo "=== meson8b 配置关键项 ==="
           grep -E "^CONFIG_TARGET_(amlogic|BOARD|SUBTARGET|PROFILE|DEVICE)" .config | head -8 || true
 
@@ -167,6 +175,10 @@ jobs:
         working-directory: /workdir/openwrt
         run: |
           make defconfig
+          # 守卫(弃用 legacy): defconfig 不得把 legacy 后端拉回
+          if grep -qE '^CONFIG_PACKAGE_iptables-(legacy|zz-legacy)=y' .config; then
+            echo "::error::legacy 后端被依赖链拉回（已弃用 fw3+legacy）:"; grep -E "iptables-legacy" .config | head -5; exit 1
+          fi
           echo "=== amlogic target 守卫（defconfig 后必须保留） ==="
           grep -E "^CONFIG_TARGET_amlogic=y" .config || { echo "::error::amlogic target 被 defconfig 清除，注入失败"; exit 1; }
           make download -j$(nproc)
