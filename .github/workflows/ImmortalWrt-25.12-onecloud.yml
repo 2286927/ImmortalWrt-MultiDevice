@@ -175,6 +175,13 @@ jobs:
           # 1) 删除全部 iptables/ip6tables 的 mod-* 与 zz-legacy 条目 2) iptables-nft 作为唯一后端
           # 3) 补 nft 原生内核模块 kmod-nft-tproxy/kmod-nft-socket（替代 xt_ 生态；fullcone 配方已有 kmod-nft-fullcone）
           sed -i -E '/^CONFIG_PACKAGE_(iptables|ip6tables)-(mod-[a-z0-9-]+|zz-legacy)=y$/d' .config
+          # fw4 完全体: miniupnpd 反转为 nftables 变体（与其他 14 线一致），fw4 防火墙断言
+          sed -i -e 's/^CONFIG_PACKAGE_miniupnpd-iptables=y$/# CONFIG_PACKAGE_miniupnpd-iptables is not set/' \
+                 -e 's/^CONFIG_PACKAGE_miniupnpd-nftables=n$/CONFIG_PACKAGE_miniupnpd-nftables=y/' .config
+          grep -q '^CONFIG_PACKAGE_firewall4=y' .config || echo 'CONFIG_PACKAGE_firewall4=y' >> .config
+          grep -q '^CONFIG_PACKAGE_miniupnpd-nftables=y' .config || echo 'CONFIG_PACKAGE_miniupnpd-nftables=y' >> .config
+          # 清 fw3 时代 xt_ 死重内核模块（用户态工具已禁用；运行时保留 core/conntrack/nat/nat6/ipset/offload）
+          sed -i -E '/^CONFIG_PACKAGE_kmod-ipt-(conntrack-extra|extra|iprange|ipsec|physdev|socket|tproxy)=y$/d' .config
           grep -q '^CONFIG_PACKAGE_iptables-nft=y' .config || echo 'CONFIG_PACKAGE_iptables-nft=y' >> .config
           grep -q '^CONFIG_PACKAGE_kmod-nft-tproxy=y' .config || echo 'CONFIG_PACKAGE_kmod-nft-tproxy=y' >> .config
           grep -q '^CONFIG_PACKAGE_kmod-nft-socket=y' .config || echo 'CONFIG_PACKAGE_kmod-nft-socket=y' >> .config
@@ -204,6 +211,9 @@ jobs:
             echo "::error::legacy 后端被依赖链拉回（已弃用 fw3+legacy），冲突来源："; grep -E "zz-legacy" .config; exit 1
           fi
           grep -q '^CONFIG_PACKAGE_iptables-nft=y' .config || { echo "::error::iptables-nft 未入选，nft 后端缺失"; exit 1; }
+          if grep -q '^CONFIG_PACKAGE_miniupnpd-iptables=y' .config; then
+            echo "::error::miniupnpd-iptables 残留（fw4 完全体要求 nftables 变体）"; exit 1
+          fi
           echo "=== iptables 后端选择 ==="
           grep -E "^CONFIG_PACKAGE_iptables(-nft)?=" .config || true
           echo "=== amlogic target 守卫（defconfig 后必须保留） ==="
