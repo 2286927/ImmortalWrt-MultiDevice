@@ -25,7 +25,7 @@ env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-25.12
   RECIPE_REPO: https://github.com/2286927/OneCloud_immortalwrt
-  RECIPE_REF: 37632a76cdf6a9f027102c98918847369df90b34
+  RECIPE_REF: 390f150fc256e38a4b21311cb1cbb9f3d367c590
   OWRT_IP: 172.16.8.1
   OWRT_NAME: OneCloud
   OWRT_CFG: recipe/Config/quicker-amlogic.config
@@ -222,10 +222,11 @@ jobs:
           grep -E "^CONFIG_PACKAGE_iptables(-nft)?=" .config || true
           echo "=== amlogic target 守卫（defconfig 后必须保留） ==="
           grep -E "^CONFIG_TARGET_amlogic=y" .config || { echo "::error::amlogic target 被 defconfig 清除，注入失败"; exit 1; }
-          # 单网口精简守卫：fw3/flow-offload/odhcpd-server/legacy-ipt-kmod 不得被依赖链拉回
-          if grep -qE '^CONFIG_PACKAGE_(firewall|kmod-nft-compat|kmod-nft-offload|kmod-ipt-offload|kmod-ipt-(nat|nat6|ipset)|odhcpd-ipv6only)=y' .config; then
+          # 单网口精简守卫：fw3 与 kmod-ipt-ipset 不得被依赖链拉回
+          # （offload/nat/nat6/compat/odhcpd 为 turboacc/dnsmasq-full-dhcpv6/iptables-nft 锁定依赖，白名单放行）
+          if grep -qE '^CONFIG_PACKAGE_(firewall|kmod-ipt-ipset)=y' .config; then
             echo "::error::单网口精简失败，以下包被依赖链拉回:"
-            grep -E '^CONFIG_PACKAGE_(firewall|kmod-nft-compat|kmod-nft-offload|kmod-ipt-offload|kmod-ipt-(nat|nat6|ipset)|odhcpd-ipv6only)=y' .config
+            grep -E '^CONFIG_PACKAGE_(firewall|kmod-ipt-ipset)=y' .config
             exit 1
           fi
           make download -j$(nproc)
