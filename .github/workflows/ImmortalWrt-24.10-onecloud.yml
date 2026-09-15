@@ -149,6 +149,13 @@ jobs:
           # 用户决策弃用 fw3+legacy（与 25.12 对齐）：删除 legacy 后端用户态工具链，iptables 统一 nft 后端；
           # 补 nft 原生 tproxy/socket 内核模块（fullcone 配方已有 kmod-nft-fullcone）
           sed -i -E '/^CONFIG_PACKAGE_(iptables|ip6tables)-(mod-[a-z0-9-]+|zz-legacy|legacy)=y$/d' .config
+          # fw4 完全体: miniupnpd 反转为 nftables 变体（与其他 14 线一致），fw4 防火墙断言
+          sed -i -e 's/^CONFIG_PACKAGE_miniupnpd-iptables=y$/# CONFIG_PACKAGE_miniupnpd-iptables is not set/' \
+                 -e 's/^CONFIG_PACKAGE_miniupnpd-nftables=n$/CONFIG_PACKAGE_miniupnpd-nftables=y/' .config
+          grep -q '^CONFIG_PACKAGE_firewall4=y' .config || echo 'CONFIG_PACKAGE_firewall4=y' >> .config
+          grep -q '^CONFIG_PACKAGE_miniupnpd-nftables=y' .config || echo 'CONFIG_PACKAGE_miniupnpd-nftables=y' >> .config
+          # 清 fw3 时代 xt_ 死重内核模块（用户态工具已禁用；运行时保留 core/conntrack/nat/nat6/ipset/offload）
+          sed -i -E '/^CONFIG_PACKAGE_kmod-ipt-(conntrack-extra|extra|iprange|ipsec|physdev|socket|tproxy)=y$/d' .config
           grep -q '^CONFIG_PACKAGE_iptables-nft=y' .config || echo 'CONFIG_PACKAGE_iptables-nft=y' >> .config
           grep -q '^CONFIG_PACKAGE_kmod-nft-tproxy=y' .config || echo 'CONFIG_PACKAGE_kmod-nft-tproxy=y' >> .config
           grep -q '^CONFIG_PACKAGE_kmod-nft-socket=y' .config || echo 'CONFIG_PACKAGE_kmod-nft-socket=y' >> .config
