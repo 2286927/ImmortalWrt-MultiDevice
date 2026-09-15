@@ -46,6 +46,50 @@ else
     echo "⚠️  未找到 config_generate，跳过 IP/主机名修改"
 fi
 
+# ── 1c. 单网口设备（OCTOPUS 晶晨盒子）网络/防火墙定制 ──────────
+# 仅 OCTOPUS 生效（其他线零影响）：单网口当 DHCP 客户端/旁路由
+#   network：删除 lan，wan=eth0 DHCP，wan6=@wan DHCPv6
+#   firewall：单 lan 域全 ACCEPT（wan/wan6 均归 lan 域，无 wan zone/masq/flow-offload）
+if [[ "${DEVICE_MODEL:-}" == "octopus" ]]; then
+    echo ">>> 单网口设备定制（OCTOPUS）：写入 files/etc/config/{network,firewall}"
+    mkdir -p files/etc/config
+    cat > files/etc/config/network <<'SINGLE_NET_EOF'
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option packet_steering '1'
+
+config interface 'wan'
+	option device 'eth0'
+	option proto 'dhcp'
+
+config interface 'wan6'
+	option device '@wan'
+	option proto 'dhcpv6'
+	option reqaddress 'try'
+	option reqprefix 'auto'
+SINGLE_NET_EOF
+    cat > files/etc/config/firewall <<'SINGLE_FW_EOF'
+config defaults
+	option input 'ACCEPT'
+	option output 'ACCEPT'
+	option forward 'ACCEPT'
+
+config zone
+	option name 'lan'
+	list network 'wan'
+	list network 'wan6'
+	option input 'ACCEPT'
+	option output 'ACCEPT'
+	option forward 'ACCEPT'
+SINGLE_FW_EOF
+    echo ">>> 单网口定制完成（lan 已移除，wan/wan6 归 lan 域）"
+fi
+
 # ── 2. 第三方软件包导入 + 官方自动去重 ─────────────────────────
 SYNC_SH="$GITHUB_WORKSPACE/scripts/common/package-sync.sh"
 [ -f "$SYNC_SH" ] || SYNC_SH="$MYDIR/../common/package-sync.sh"
