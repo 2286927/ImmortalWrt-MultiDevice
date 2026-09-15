@@ -825,9 +825,7 @@ jobs:
         uses: actions/upload-artifact@main
         with:
           name: octopus-rootfs-25.12
-          # 25.12 树会同时产出 immortalwrt-...-rootfs.tar.gz 与 immortalwrt-...-targz-rootfs.tar.gz（同内容双命名），
-          # 宽匹配会让 flippy 收到 2 个 tar.gz 触发 cp 多源失败，这里精确匹配单一 rootfs 包
-          path: openwrt/bin/targets/armsr/armv8/*armv8-generic-rootfs.tar.gz
+          path: openwrt/bin/targets/armsr/armv8/*rootfs.tar.gz
 
       - name: 上传 bin
         uses: actions/upload-artifact@main
@@ -1092,10 +1090,10 @@ jobs:
           fi
           cp "$IMG" "$OUT_DIR/octopus-s912-25.12.img.gz"
           ( cd "$OUT_DIR" && sha256sum "octopus-s912-25.12.img.gz" > "octopus-s912-25.12.img.gz.sha256" )
-          # flippy 官方 update-*.sh 刷机/升级脚本随 Release 交付（与旧仓库 OpenWrt-ARMv8 行为一致）
-          if [ -d /opt/openwrt_packit/files ]; then
-            cp /opt/openwrt_packit/files/update*.sh "$OUT_DIR/"
-            chmod +x "$OUT_DIR"/update*.sh
+          # 仅交付通用刷机脚本 update-amlogic-openwrt.sh（其余设备专用 update-*.sh 不再发布）
+          if [ -f /opt/openwrt_packit/files/update-amlogic-openwrt.sh ]; then
+            cp /opt/openwrt_packit/files/update-amlogic-openwrt.sh "$OUT_DIR/"
+            chmod +x "$OUT_DIR"/update-amlogic-openwrt.sh
           fi
           echo ">>> 固定命名直刷镜像："
           ls -lh "$OUT_DIR"/octopus-s912-*

@@ -1090,10 +1090,10 @@ jobs:
           fi
           cp "$IMG" "$OUT_DIR/octopus-s912-24.10.img.gz"
           ( cd "$OUT_DIR" && sha256sum "octopus-s912-24.10.img.gz" > "octopus-s912-24.10.img.gz.sha256" )
-          # flippy 官方 update-*.sh 刷机/升级脚本随 Release 交付（与旧仓库 OpenWrt-ARMv8 行为一致）
-          if [ -d /opt/openwrt_packit/files ]; then
-            cp /opt/openwrt_packit/files/update*.sh "$OUT_DIR/"
-            chmod +x "$OUT_DIR"/update*.sh
+          # 仅交付通用刷机脚本 update-amlogic-openwrt.sh（其余设备专用 update-*.sh 不再发布）
+          if [ -f /opt/openwrt_packit/files/update-amlogic-openwrt.sh ]; then
+            cp /opt/openwrt_packit/files/update-amlogic-openwrt.sh "$OUT_DIR/"
+            chmod +x "$OUT_DIR"/update-amlogic-openwrt.sh
           fi
           echo ">>> 固定命名直刷镜像："
           ls -lh "$OUT_DIR"/octopus-s912-*
