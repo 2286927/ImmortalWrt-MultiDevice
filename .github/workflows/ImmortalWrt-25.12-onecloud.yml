@@ -52,7 +52,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout 主仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 初始化编译环境
         env:
@@ -257,7 +257,7 @@ jobs:
           ls -lh $PWD
 
       - name: 上传 artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: onecloud-${{ env.REPO_BRANCH }}-${{ env.OWRT_DATE }}
           path: openwrt/outfile/*
