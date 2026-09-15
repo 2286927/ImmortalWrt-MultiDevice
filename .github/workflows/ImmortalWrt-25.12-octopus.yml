@@ -358,6 +358,31 @@ jobs:
           restore-keys: |
             dl-${{ env.REPO_BRANCH }}-
 
+      - name: 恢复 toolchain 缓存
+        id: cache-toolchain
+        uses: actions/cache@v5
+        with:
+          path: |
+            openwrt/staging_dir/host
+            openwrt/staging_dir/hostcc
+            openwrt/staging_dir/toolchain-*
+            openwrt/build_dir/host
+          key: tc-${{ env.REPO_BRANCH }}-armsr-armv8-${{ hashFiles('openwrt/toolchain/**/Makefile', 'openwrt/tools/**/Makefile', 'openwrt/include/*.mk') }}
+          restore-keys: |
+            tc-${{ env.REPO_BRANCH }}-armsr-armv8-
+
+      - name: 修正 toolchain 时间戳（缓存命中时跳过工具链重编）
+        if: steps.cache-toolchain.outputs.cache-hit == 'true'
+        working-directory: openwrt
+        run: |
+          touch staging_dir/host/.prepared 2>/dev/null || true
+          touch staging_dir/host/.prereq-build 2>/dev/null || true
+          find staging_dir/host/stamp -type f -exec touch {} + 2>/dev/null || true
+          find staging_dir/toolchain-* -name ".prepared*" -exec touch {} + 2>/dev/null || true
+          find staging_dir/toolchain-* -name ".configured" -exec touch {} + 2>/dev/null || true
+          find staging_dir/toolchain-*/stamp -type f -exec touch {} + 2>/dev/null || true
+          find build_dir/host -name ".prepared*" -exec touch {} + 2>/dev/null || true
+
       - name: 恢复 ccache 缓存
         uses: actions/cache@v5
         with:
@@ -806,7 +831,7 @@ jobs:
         uses: actions/upload-artifact@main
         with:
           name: octopus-rootfs-25.12
-          path: openwrt/bin/targets/armsr/armv8/*-generic-rootfs.tar.gz
+          path: openwrt/bin/targets/armsr/armv8/*rootfs.tar.gz
 
       - name: 上传 bin
         uses: actions/upload-artifact@main
