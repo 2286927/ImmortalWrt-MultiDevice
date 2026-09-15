@@ -105,7 +105,7 @@ env:
   ENABLE_OPENCLASH: ${{ github.event.inputs.enable_openclash || 'true' }}
   ENABLE_WECHATPUSH: ${{ github.event.inputs.enable_wechatpush || 'false' }}
   UPLOAD_ALL_FILES: ${{ github.event.inputs.upload_all_files || 'false' }}
-  LAN_IP: '172.16.7.1'
+  LAN_IP: '172.16.1.1'
   LAN_HOSTNAME: 'R68S'
   AUTOUPDATE_PREFIX: autoupdate-R68S-24.10
 
