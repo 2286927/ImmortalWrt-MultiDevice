@@ -207,7 +207,7 @@ jobs:
           remove-haskell: true
           remove-codeql: true
           remove-docker-images: true
-          root-reserve-mb: 3072
+          root-reserve-mb: 10240
 
       - name: 检出代码
         uses: actions/checkout@v5
@@ -317,6 +317,10 @@ jobs:
           sudo mkdir -p "$GITHUB_WORKSPACE/workdir"
           sudo chown "$USER:$GROUPS" "$GITHUB_WORKSPACE/workdir"
 
+          # 磁盘防护：清理 apt 缓存与系统日志，防止系统盘被挤爆导致 runner Worker 崩溃
+          sudo apt-get clean
+          sudo journalctl --vacuum-size=100M >/dev/null 2>&1 || true
+
       - name: 扩容 /tmp 到 4GB
         run: |
           # 如果 /tmp 本身就是 tmpfs，它会调整大小；如果不是，它会挂载一个新的
@@ -344,6 +348,9 @@ jobs:
           fi
 
           ln -sf "${{ github.workspace }}/workdir/openwrt" "${{ github.workspace }}/openwrt"
+
+          # 磁盘防护：upstream full clone .git 约 1.5-2GB，gc 释放数百 MB
+          git -C "${{ github.workspace }}/workdir/openwrt" gc --prune=now --quiet 2>/dev/null || true
 
       - name: 计算下载缓存键
         run: echo "DL_CACHE_KEY=dl-${{ env.REPO_BRANCH }}-$(date +%Y%m)" >> $GITHUB_ENV
@@ -488,6 +495,10 @@ jobs:
             exit 1
           }
 
+          # 磁盘防护：feeds 均为 full clone，删除 .git 元数据（约 1.5-2GB），Makefile 不受影响
+          rm -rf feeds/*/.git 2>/dev/null || true
+          echo ">>> feeds 磁盘占用（已清理 .git）：$(du -sh feeds 2>/dev/null | awk '{print $1}')"
+
       - name: 安装iStore商店
         if: (github.event.inputs.istore == 'true')
         run: |
@@ -560,7 +571,7 @@ jobs:
 
           # 提升 ccache 容量上限（默认 5G，降低工具链与软件包对象互相淘汰的概率）
           mkdir -p ~/.config/ccache
-          echo "max_size = 6G" > ~/.config/ccache/ccache.conf
+          echo "max_size = 5G" > ~/.config/ccache/ccache.conf
 
           echo "=== 当前 ccache 配置 ==="
           grep -n "CONFIG_CCACHE" .config || echo "❌ ccache 配置写入失败"
