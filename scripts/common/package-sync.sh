@@ -1,6 +1,6 @@
 #!/bin/bash
 #==============================================================================
-# scripts/common/package-sync.sh  (v2.0)
+# scripts/common/package-sync.sh  (v2.1)
 #------------------------------------------------------------------------------
 # 从 kenzok8/small-package 导入白名单第三方软件包，并自动跳过官方已提供的
 # 同名包（ImmortalWrt 官方源码树 + 官方 feeds 优先），彻底解决：
@@ -72,9 +72,12 @@ sync_small_packages() {
   local skipped_list=() missing_list=()
   local pkg dir
 
-  while read -r pkg; do
+  while read -r line; do
+    # v2.1 修复：白名单行内多包以空格分隔，逐词解析（此前整行被当作单个包名查找，
+    # 导致多包行全部误报"small-package 中不存在"）
+    for pkg in $line; do
     [ -z "$pkg" ] && continue
-    case "$pkg" in \#*) continue ;; esac
+    case "$pkg" in \#*|\-*|*\/*) continue ;; esac
 
     # 1) 官方已提供 → 跳过（官方优先）
     if ! is_force_third_party "$pkg" && is_official_pkg "$pkg"; then
@@ -95,6 +98,7 @@ sync_small_packages() {
     cp -a "$dir" "package/$pkg"
     imported=$((imported+1))
     echo "📦 导入 $pkg"
+    done
   done <<'WHITELIST_EOF'
 # ---------- 代理/科学上网 ----------
 mihomo luci-app-passwall2 luci-app-ssr-plus luci-app-clash
