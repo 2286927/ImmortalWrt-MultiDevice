@@ -814,8 +814,10 @@ jobs:
             echo "❌ 未找到 sysupgrade 镜像，无法生成值守升级资产"
             exit 1
           fi
-          cp "$SYSUPGRADE_FILE" "$FIRMWARE/${PREFIX}-sysupgrade.itb"
-          ( cd "$FIRMWARE" && sha256sum "${PREFIX}-sysupgrade.itb" > "${PREFIX}-sysupgrade.itb.sha256" )
+          SYSUPGRADE_EXT="${SYSUPGRADE_FILE##*.}"
+          cp "$SYSUPGRADE_FILE" "$FIRMWARE/${PREFIX}-sysupgrade.${SYSUPGRADE_EXT}"
+          ( cd "$FIRMWARE" && sha256sum "${PREFIX}-sysupgrade.${SYSUPGRADE_EXT}" > "${PREFIX}-sysupgrade.${SYSUPGRADE_EXT}.sha256" )
+          echo "SYSUPGRADE_ASSET=${PREFIX}-sysupgrade.${SYSUPGRADE_EXT}" >> "$GITHUB_ENV"
           {
             echo "RUN_ID=${{ github.run_id }}"
             echo "BUILD=${{ env.FIRMWARE_VERSION }}${{ env.FILE_DATE }}"
@@ -865,7 +867,7 @@ jobs:
             echo "设备型号: $DEVICE_MODEL"
             echo "编译时间: $(date +'%Y-%m-%d %H:%M %Z')"
             echo "后台地址: ${LAN_IP} 或 http://${LAN_HOSTNAME}.lan/"
-            echo "值守升级固定地址: https://github.com/${{ github.repository }}/releases/latest/download/autoupdate-CM520-25.12-sysupgrade.itb"
+            echo "值守升级固定地址: https://github.com/${{ github.repository }}/releases/latest/download/${SYSUPGRADE_ASSET}"
             echo "源代码仓库: $REPO_URL"
             echo "源仓库分支: $REPO_BRANCH"
             echo "源仓库提交: [查看编译时提交]($SOURCE_COMMIT_URL)"
