@@ -234,7 +234,7 @@ jobs:
           ls -lh $PWD
 
       - name: 上传 artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@main
         with:
           name: onecloud-${{ env.REPO_BRANCH }}-${{ env.OWRT_DATE }}
           path: openwrt/outfile/*
