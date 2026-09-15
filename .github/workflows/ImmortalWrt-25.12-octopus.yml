@@ -803,20 +803,14 @@ jobs:
           echo "status=success" >> "$GITHUB_OUTPUT"
           echo "🎉 固件整理完成"
 
-      - name: 生成值守升级固定资产
+      - name: 生成值守升级版本信息（镜像资产改由 flippy 打包 job 生成）
         if: steps.compile.outputs.status == 'success'
         run: |
           set -e
           PREFIX="autoupdate-OCTOPUS-25.12"
-          # octopus 产物为直刷镜像（img.gz），固定 URL 资产以 img.gz 为源生成
-          IMG_FILE=$(ls "$FIRMWARE"/*.img.gz 2>/dev/null | head -n 1 || true)
-          [ -z "$IMG_FILE" ] && IMG_FILE=$(ls "$FIRMWARE"/*sysupgrade* 2>/dev/null | head -n 1 || true)
-          if [ -z "$IMG_FILE" ]; then
-            echo "❌ 未找到固件镜像，无法生成值守升级资产"
-            exit 1
-          fi
-          cp "$IMG_FILE" "$FIRMWARE/${PREFIX}-img.gz"
-          ( cd "$FIRMWARE" && sha256sum "${PREFIX}-img.gz" > "${PREFIX}-img.gz.sha256" )
+          # armsr combined-efi 为 UEFI 引导镜像，晶晨 S912（安卓 bootloader 启动）无法使用；
+          # 值守升级镜像必须用 flippy 双内核包（octopus-s912-*.img.gz），
+          # 由 package-s912 job 生成并上传到同一 Release，固定 URL 资产名保持不变。
           {
             echo "RUN_ID=${{ github.run_id }}"
             echo "BUILD=${{ env.FIRMWARE_VERSION }}${{ env.FILE_DATE }}"
@@ -897,8 +891,8 @@ jobs:
             echo "## 验证固件"
             echo "- 未验证"
             echo "## 🔧 刷机说明"
-            echo "1. 产物为 **img.gz** 直刷镜像，使用 dd 或写卡工具写入 SD/U 盘、eMMC。"
-            echo "2. 直刷镜像不支持 sysupgrade 在线升级，升级需重新写盘。"
+            echo "1. flippy 直刷包（openwrt_s912_* / octopus-s912-*.img.gz）用 dd 或写卡工具写入，SD 启动后执行内置 openwrt-install-amlogic 安装到 EMMC。"
+            echo "2. 已装 EMMC 升级：新固件与 update-amlogic-openwrt.sh 放同目录运行，或直接使用固件内置 openwrt-update-amlogic。"
           } > release
 
           echo "status=success" >> $GITHUB_OUTPUT
@@ -1103,6 +1097,13 @@ jobs:
           fi
           echo ">>> 固定命名直刷镜像："
           ls -lh "$OUT_DIR"/octopus-s912-*
+          # 值守升级固定资产：以 flippy 双内核包为源（晶晨 S912 实际可用），
+          # 固定 URL 资产名保持 autoupdate-OCTOPUS-25.12-img.gz 不变
+          PREFIX="autoupdate-OCTOPUS-25.12"
+          cp "$OUT_DIR/octopus-s912-25.12.img.gz" "$OUT_DIR/${PREFIX}-img.gz"
+          ( cd "$OUT_DIR" && sha256sum "${PREFIX}-img.gz" > "${PREFIX}-img.gz.sha256" )
+          echo ">>> 值守升级固定资产："
+          ls -l "$OUT_DIR"/${PREFIX}-*
 
       - name: 上传直刷镜像到 Release
         uses: softprops/action-gh-release@v3
