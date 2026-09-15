@@ -78,7 +78,7 @@ on:
       #   default: true
 
   schedule:
-    - cron: '45 6 * * 1,4'
+    - cron: '20 6 * * 1,4'
 
 permissions:
   contents: write

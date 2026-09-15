@@ -44,7 +44,10 @@ scripts/             25.12/、24.10/ 各含 diy-part1.sh、diy-part2.sh（v2.1 �
 ## 触发方式
 
 - **手动触发**：Actions → 选择对应 `ImmortalWrt-<分支>-<设备>` → Run workflow。可选参数与 v2.1 相同：上传 bin/packages/所有文件、自定义源仓库地址/分支/config 文件、SSH 调试（tmate）、keepalived/docker 开关。
-- **定时触发**：主流设备每周一、周四（UTC 6 点档 = 北京时间 14 点档）按设备错峰：rax3000m :00、cm520 :05、hc5962 :10、newifi-d2 :15、r68s :15、newifi-d1 :20、newifi-y1 :25、octopus :35；玩客云因配方式注入流程独立，每周五 UTC 19:30 单独跑。
+- **定时触发**：主流设备每周一、周四（UTC 6 点档 = 北京时间 14 点档），24.10 与 25.12 两套平行错峰：
+  - 24.10 档：rax3000m :00、cm520 :05、hc5962 :10、newifi-d2 :15、newifi-d1 :20、newifi-y1 :25、octopus :35、r68s :40
+  - 25.12 档：octopus :10、r68s :20、rax3000m :30、cm520 :35、hc5962 :40、newifi-d2 :45、newifi-d1 :50、newifi-y1 :55
+  - 玩客云因配方式注入流程独立，每周五 UTC 19:30 单独跑。
 - **源码更新自动触发**：沿用 v2.1 的 `check-source-updates` 检测 job（缓存 last-checked-sha，有新提交才编译）。
 
 ## 值守式升级（固定 URL）
