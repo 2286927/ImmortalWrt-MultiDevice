@@ -825,7 +825,9 @@ jobs:
         uses: actions/upload-artifact@main
         with:
           name: octopus-rootfs-25.12
-          path: openwrt/bin/targets/armsr/armv8/*rootfs.tar.gz
+          # 25.12 树会同时产出 immortalwrt-...-rootfs.tar.gz 与 immortalwrt-...-targz-rootfs.tar.gz（同内容双命名），
+          # 宽匹配会把两个包都打进 artifact，flippy job 下载后 cp 多源失败（fc9cee41b1 修复，勿改回宽匹配）
+          path: openwrt/bin/targets/armsr/armv8/*armv8-generic-rootfs.tar.gz
 
       - name: 上传 bin
         uses: actions/upload-artifact@main
