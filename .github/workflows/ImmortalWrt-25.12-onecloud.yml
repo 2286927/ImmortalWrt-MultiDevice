@@ -170,12 +170,14 @@ jobs:
 
           rm -rf ./tmp* ./.config*
           cp $GITHUB_WORKSPACE/${{ env.OWRT_CFG }} .config
-          # r9修复: 25.12 APK 体系 iptables-nft 与 iptables-zz-legacy 硬互斥（均提供 iptables=1.8.10-r3，
-          # legacy iptables-mod-* 模块依赖会把 iptables-zz-legacy 拉入 world，与配方残留的 iptables-nft=y 冲突
-          # 导致 package/install Error 16）。配方为 fw3+legacy 体系（fullconenat/lean2 nat 规则均依赖 legacy），
-          # 删除 iptables-nft、显式选中 iptables-zz-legacy。
-          sed -i '/^CONFIG_PACKAGE_iptables-nft=y$/d' .config
-          grep -q '^CONFIG_PACKAGE_iptables-zz-legacy=y' .config || echo 'CONFIG_PACKAGE_iptables-zz-legacy=y' >> .config
+          # r10修复(用户决策弃用 fw3+legacy): 25.12 APK 体系中 iptables-mod-* 全系硬依赖 iptables-zz-legacy，
+          # 与 iptables-nft 互斥；且 legacy 后端在新分支软件生态兼容性差。统一弃用 legacy 后端：
+          # 1) 删除全部 iptables/ip6tables 的 mod-* 与 zz-legacy 条目 2) iptables-nft 作为唯一后端
+          # 3) 补 nft 原生内核模块 kmod-nft-tproxy/kmod-nft-socket（替代 xt_ 生态；fullcone 配方已有 kmod-nft-fullcone）
+          sed -i -E '/^CONFIG_PACKAGE_(iptables|ip6tables)-(mod-[a-z0-9-]+|zz-legacy)=y$/d' .config
+          grep -q '^CONFIG_PACKAGE_iptables-nft=y' .config || echo 'CONFIG_PACKAGE_iptables-nft=y' >> .config
+          grep -q '^CONFIG_PACKAGE_kmod-nft-tproxy=y' .config || echo 'CONFIG_PACKAGE_kmod-nft-tproxy=y' >> .config
+          grep -q '^CONFIG_PACKAGE_kmod-nft-socket=y' .config || echo 'CONFIG_PACKAGE_kmod-nft-socket=y' >> .config
           echo "=== meson8b 配置关键项 ==="
           grep -E "^CONFIG_TARGET_(amlogic|BOARD|SUBTARGET|PROFILE|DEVICE)" .config | head -8 || true
 
@@ -197,12 +199,13 @@ jobs:
         working-directory: /workdir/openwrt
         run: |
           make defconfig
-          # r9修复守卫: defconfig 依赖解析不得把 iptables-nft 拉回（否则与 iptables-zz-legacy APK 冲突，快速失败省 2h）
-          if grep -q '^CONFIG_PACKAGE_iptables-nft=y' .config && grep -q '^CONFIG_PACKAGE_iptables-zz-legacy=y' .config; then
-            echo "::error::iptables-nft 与 iptables-zz-legacy 同时入选（25.12 APK 互斥冲突），请检查依赖链"; exit 1
+          # r10守卫(弃用 legacy): defconfig 依赖解析不得把 legacy 后端拉回（iptables-mod-* 已禁用，出现即有残留依赖）
+          if grep -qE '^CONFIG_PACKAGE_(iptables|ip6tables)-zz-legacy=y' .config; then
+            echo "::error::legacy 后端被依赖链拉回（已弃用 fw3+legacy），冲突来源："; grep -E "zz-legacy" .config; exit 1
           fi
+          grep -q '^CONFIG_PACKAGE_iptables-nft=y' .config || { echo "::error::iptables-nft 未入选，nft 后端缺失"; exit 1; }
           echo "=== iptables 后端选择 ==="
-          grep -E "^CONFIG_PACKAGE_iptables(-zz-legacy|-nft)?=" .config || true
+          grep -E "^CONFIG_PACKAGE_iptables(-nft)?=" .config || true
           echo "=== amlogic target 守卫（defconfig 后必须保留） ==="
           grep -E "^CONFIG_TARGET_amlogic=y" .config || { echo "::error::amlogic target 被 defconfig 清除，注入失败"; exit 1; }
           make download -j$(nproc)
