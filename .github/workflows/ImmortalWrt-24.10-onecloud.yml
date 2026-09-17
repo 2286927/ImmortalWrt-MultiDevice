@@ -111,6 +111,11 @@ jobs:
           # 该 action 命中缓存后会删 Makefile 的 toolchain stamp 依赖跳过工具链构建，
           # 若目录名因 vfpv4 变化，恢复的缓存里没有对应 toolchain，内核 syncconfig 找不到 gcc 直接失败
           sed -i "s/CPU_SUBTYPE:=vfpv4/CPU_SUBTYPE:=neon-vfpv4/" target/linux/amlogic/meson8b/target.mk
+          # 跨版本 kconfig 新符号预置（25.12 线 r8 同款实证修复）：lede meson8b config-6.6 缺
+          # MDIO_BUS_MUX_MESON_GXL（无默认值符号），内核 syncconfig 非交互遇 (NEW) 询问 EOF 直接失败
+          grep -q "^CONFIG_MDIO_BUS_MUX_MESON_GXL=" target/linux/amlogic/meson8b/config-6.6 || echo "CONFIG_MDIO_BUS_MUX_MESON_GXL=m" >> target/linux/amlogic/meson8b/config-6.6
+          # 删 FAIL_ON_UNCONFIGURED 开关（25.12 线 r8 同款）：其余 kconfig 新符号按默认值静默取值，防 syncconfig 交互 EOF
+          sed -i '/export FAIL_ON_UNCONFIGURED=1/d' include/kernel-build.mk
           chmod -Rf 755 target/linux/amlogic
           echo "=== amlogic target 树 ==="
           ls target/linux/amlogic
@@ -119,6 +124,7 @@ jobs:
           test -d target/linux/amlogic/patches-6.6 || { echo "::error::patches-6.6 缺失"; exit 1; }
           test -f target/linux/amlogic/meson8b/target.mk || { echo "::error::meson8b 缺失"; exit 1; }
           grep -q "CPU_SUBTYPE:=neon-vfpv4" target/linux/amlogic/meson8b/target.mk || { echo "::error::meson8b CPU_SUBTYPE 未改为 neon-vfpv4（toolchain 缓存目录名不匹配）"; exit 1; }
+          grep -q "^CONFIG_MDIO_BUS_MUX_MESON_GXL=m" target/linux/amlogic/meson8b/config-6.6 || { echo "::error::MDIO_BUS_MUX_MESON_GXL 未预置（kconfig NEW 符号会致 syncconfig 失败）"; exit 1; }
 
       - name: 设置订阅源
         working-directory: /workdir/openwrt
