@@ -216,9 +216,9 @@ jobs:
           mkdir -p files/etc/config
           cp -f package/network/services/uhttpd/files/uhttpd.config files/etc/config/uhttpd
           sed -i -e '/list lua_prefix/d' \
-                 -e '/option home/a\tlist ucode_prefix\t"/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc"' \
+                 -e 's|^\toption home\t\t/www$|&\n\tlist ucode_prefix\t"/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc"|' \
                  files/etc/config/uhttpd
-          grep -q 'ucode_prefix.*uhttpd.uc' files/etc/config/uhttpd || { echo "::error::uhttpd ucode_prefix 注入失败"; exit 1; }
+          grep -qP '^\tlist ucode_prefix\t"/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc"' files/etc/config/uhttpd || { echo "::error::uhttpd ucode_prefix 注入失败（非 tab 开头合法 list 行）"; exit 1; }
 
       - name: 下载编译环境
         working-directory: /workdir/openwrt
