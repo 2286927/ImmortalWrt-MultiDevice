@@ -152,29 +152,32 @@ jobs:
       - name: 加载自定义配置
         working-directory: /workdir/openwrt
         run: |
-          # r13: LuCI 后端 uhttpd → nginx（移植 shiyu1314/openwrt-onecloud 方案）
-          # 官方 feeds 源码 + 编译期 sed 层（与 nft 完全体/Docker 回滚同构），不替换第三方包
-          test -f feeds/luci/collections/luci/Makefile || { echo "::error::feeds/luci 未就位"; exit 1; }
-          # attendedsysupgrade 与本仓库升级链路冲突，从各 collection 移除（shiyu 验证组合）
+          # r13: LuCI 后端 uhttpd → nginx（openwrt/luci openwrt-25.12 真实结构）
+          # 25.12 依赖链: luci → luci-light → uhttpd；luci collection 已不含 uhttpd
+          test -f feeds/luci/collections/luci-light/Makefile || { echo "::error::feeds/luci 未就位"; exit 1; }
+          # attendedsysupgrade 在 25.12 已被 luci-app-package-manager 取代（容忍处理，无残留即过）
           sed -i '/luci-app-attendedsysupgrade/d' \
               feeds/luci/collections/luci-nginx/Makefile \
-              feeds/luci/collections/luci-ssl-openssl/Makefile \
-              feeds/luci/collections/luci-ssl/Makefile \
+              feeds/luci/collections/luci-light/Makefile \
               feeds/luci/collections/luci/Makefile 2>/dev/null || true
-          sed -i 's/+uhttpd /+luci-nginx /g' feeds/luci/collections/luci/Makefile
-          sed -i 's/+uhttpd-mod-ubus //' feeds/luci/collections/luci/Makefile
-          sed -i 's/+uhttpd /+luci-nginx /g' feeds/luci/collections/luci-light/Makefile
-          sed -i "s/+luci /+luci-nginx /g" feeds/luci/collections/luci-ssl-openssl/Makefile
-          sed -i "s/+luci /+luci-nginx /g" feeds/luci/collections/luci-ssl/Makefile
-          sed -i 's/+uhttpd +uhttpd-mod-ubus /+luci-nginx /g' feeds/packages/net/wg-installer/Makefile
-          sed -i 's/+uhttpd-mod-ubus //g' feeds/luci/collections/luci-light/Makefile
-          sed -i 's/+luci-nginx \\$/+luci-nginx/' feeds/luci/collections/luci-light/Makefile
-          # 官方 nginx 包 ubus 并发参数调优（LuCI 流畅度，shiyu 同款；容忍参数改名）
+          # luci-light: +uhttpd（续行 \ 或行尾两种形态）→ +luci-nginx；uhttpd-mod-ubus 独占行删除；
+          # 删行后 +luci-nginx 成为最后一个依赖，去掉行尾续行符（保持 make 语法完整）
+          sed -i -e 's/^\([[:space:]]*\)+uhttpd[[:space:]]\+\\$/\1+luci-nginx \\/' \
+                 -e 's/^\([[:space:]]*\)+uhttpd$/\1+luci-nginx/' \
+                 -e '/^[[:space:]]*+uhttpd-mod-ubus$/d' \
+                 -e 's/^\([[:space:]]*\)+luci-nginx[[:space:]]\+\\$/\1+luci-nginx/' \
+              feeds/luci/collections/luci-light/Makefile
+          # wg-installer-server（packages feed，单行 DEPENDS）: +uhttpd +uhttpd-mod-ubus → +luci-nginx
+          sed -i 's/+uhttpd +uhttpd-mod-ubus /+luci-nginx /g' feeds/packages/net/wg-installer/Makefile 2>/dev/null || true
+          # 官方 nginx 包 ubus 并发参数调优（容忍参数改名）
           sed -i 's/ubus_parallel_req 2/ubus_parallel_req 6/g' feeds/packages/net/nginx/files-luci-support/60_nginx-luci-support 2>/dev/null || true
-          grep -q 'luci-nginx' feeds/luci/collections/luci/Makefile || { echo "::error::luci collection nginx sed 失败"; exit 1; }
-          grep -q 'luci-nginx' feeds/luci/collections/luci-light/Makefile || { echo "::error::luci-light collection nginx sed 失败"; exit 1; }
-          echo "=== r13 nginx sed 完成 ==="
-          grep -n 'luci-nginx' feeds/luci/collections/luci/Makefile feeds/luci/collections/luci-light/Makefile
+          # 守卫: luci-light 已切 luci-nginx 且 uhttpd 系零残留
+          grep -q 'luci-nginx' feeds/luci/collections/luci-light/Makefile || { echo "::error::luci-light nginx sed 失败"; exit 1; }
+          if grep -q 'uhttpd' feeds/luci/collections/luci-light/Makefile; then
+            echo "::error::luci-light 仍有 uhttpd 残留:"; grep -n uhttpd feeds/luci/collections/luci-light/Makefile; exit 1
+          fi
+          echo "=== r13 nginx sed 完成（luci → luci-light → luci-nginx → nginx）==="
+          cat feeds/luci/collections/luci-light/Makefile
           # r13: vermagic 固定（shiyu1314 方案）——kmod 版本串只随 kernel-6.12 HASH 变化，
           # 配合在线升级/包安装时 kmod 兼容性提升；内核大版本（6.12→6.18）切换时 HASH 必然变化
           sed -ie 's/^\(.\).*vermagic$/\1cp $(TOPDIR)\/.vermagic $(LINUX_DIR)\/.vermagic/' include/kernel-defaults.mk
