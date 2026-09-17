@@ -559,7 +559,14 @@ jobs:
       - name: 生成编译配置
         run: |
           cd openwrt
+          # r11 LuCI ucode 修复（25.12 apk 全线）：luci-base postinst（opkg 机制）不执行 + uhttpd-mod-ucode
+          # 未被依赖链拉入 → /cgi-bin/luci 无法分发，浏览器 403。修：装 uhttpd-mod-ucode + sed 模板注入 ucode_prefix
+          grep -q '^CONFIG_PACKAGE_uhttpd-mod-ucode=y' .config || echo 'CONFIG_PACKAGE_uhttpd-mod-ucode=y' >> .config
+          sed -i -e '/list lua_prefix/d' \
+                 -e '/option home/a\\tlist ucode_prefix\\t"/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc"' \
+                 package/network/services/uhttpd/files/uhttpd.config
           make defconfig
+          grep -q '^CONFIG_PACKAGE_uhttpd-mod-ucode=y' .config || { echo "::error::uhttpd-mod-ucode 未入选（LuCI 将 403）"; exit 1; }
 
       - name: 启用 ccache
         run: |
