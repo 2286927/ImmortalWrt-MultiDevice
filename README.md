@@ -13,10 +13,10 @@
 | newifi-d2 | Newifi D2 | ramips/mt7621（d-team_newifi-d2） | sysupgrade.bin |
 | newifi-d1 | Newifi D1 | ramips/mt7621（lenovo_newifi-d1） | sysupgrade.bin |
 | newifi-y1 | Newifi Y1 | ramips/mt7620（lenovo_newifi-y1） | sysupgrade.bin |
-| onecloud | 玩客云 | amlogic/meson8b（配方仓库注入 target 树） | AmlImg 线刷直刷包 burn.img.xz（单网口定制版） |
+| onecloud | 玩客云 | amlogic/meson8b（lede master 注入 target 树） | AmlImg 线刷直刷包 burn.img.xz（单网口定制版） |
 | octopus | 章鱼星球 | armsr/armv8（generic） | armsr rootfs.tar.gz → flippy 打包 `octopus-s912-<分支>.img.gz` 双内核直刷包（单网口定制版） |
 
-> - **玩客云**：官方 ImmortalWrt 无 amlogic target，workflow 从配方仓库 [2286927/OneCloud_immortalwrt](https://github.com/2286927/OneCloud_immortalwrt) 注入 `target/linux/amlogic` 树（24.10 = lede6.6 树内核 6.6；25.12 = coolsnowwolf/lede 树内核 6.12），config 取配方 `recipe/Config/quicker-amlogic.config`，`RECIPE_REF` 固定 commit 保证可复现；产物由 convert3.sh 制作 AmlImg 线刷包（含 uboot，双 USB 公头线刷）。
+> - **玩客云**：官方 ImmortalWrt 无 amlogic target，workflow 从 [coolsnowwolf/lede](https://github.com/coolsnowwolf/lede) master 注入 `target/linux/amlogic` 树（两线同源：24.10 = lede 6.6 testing 补丁集，`KERNEL_PATCHVER` 6.18→6.6 对齐 24.10 generic；25.12 = 同树 6.6 补丁集改名 6.12，Kwrt 验证方案），config 取配方 [2286927/OneCloud_immortalwrt](https://github.com/2286927/OneCloud_immortalwrt) 的 `recipe/Config/quicker-amlogic.config`，`RECIPE_REF` 固定 commit 保证可复现；产物由 convert3.sh 制作 AmlImg 线刷包（含 uboot，双 USB 公头线刷）。
 > - **章鱼星球**：armsr 编译产出 `rootfs.tar.gz` 后由 `package-s912` job 用 flippy 打包为直刷镜像（flippy 双内核 k6.6/k6.12），固定命名 `octopus-s912-<分支>.img.gz`（附 sha256）；SD 启动后执行内置 `openwrt-install-amlogic` 安装到 EMMC。
 
 ## 单网口设备定制（octopus / onecloud）
@@ -74,14 +74,14 @@ https://github.com/<owner>/<repo>/releases/latest/download/autoupdate-<设备>-<
 | newifi-d2 | 同上仓库（newifi3.config） | 映射表 + 旧 config（kmod-mt76 系 5 项） |
 | newifi-d1 | 同上仓库（newifi2.config） | 映射表（旧 config 无平台 kmod =y 行，不追加） |
 | newifi-y1 | 同上仓库（newifimini.config1） | 映射表（同上） |
-| onecloud | 配方仓库 2286927/OneCloud_immortalwrt（recipe/Config/quicker-amlogic.config，CRLF） | 配方注入 amlogic/meson8b target 树 |
+| onecloud | 配方仓库 2286927/OneCloud_immortalwrt（recipe/Config/quicker-amlogic.config，CRLF） | lede master 注入 amlogic/meson8b target 树 |
 | octopus | 2286927/OpenWrt-ARMv8（OpenWrt_ARMv8.config） | CONFIG_TARGET_armsr_armv8_DEVICE_generic=y + flippy 打包 |
 
 旧 config 中的 luci-app / passwall 相关行一律未迁移（插件集统一走基底），仅移植平台绑定 kmod 的 `=y` 行。
 
 ## 相关仓库
 
-- **[2286927/OneCloud_immortalwrt](https://github.com/2286927/OneCloud_immortalwrt)**：玩客云配方仓库（amlogic target 树 + 专用 config + files 三件套）。已脱离上游 rmoyulong/OneCloud_OpenWrt 维护，workflow 通过 `RECIPE_REF` 锁定 commit。
+- **[2286927/OneCloud_immortalwrt](https://github.com/2286927/OneCloud_immortalwrt)**：玩客云配方仓库（专用 config + files + 线刷包制作脚本；amlogic target 树已改由 coolsnowwolf/lede master 提供，配方仓库不再注入内核树）。已脱离上游 rmoyulong/OneCloud_OpenWrt 维护，workflow 通过 `RECIPE_REF` 锁定 commit。
 - **[2286927/ImmortalWrt-24.10-CMCC-RAX3000M-EMMC](https://github.com/2286927/ImmortalWrt-24.10-CMCC-RAX3000M-EMMC)**：RAX3000M EMMC 版独立仓库（24.10，ddns-go/luci-app-ddns-go 白名单内置）。
 
 ## 使用说明
