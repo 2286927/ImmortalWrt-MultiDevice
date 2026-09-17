@@ -152,6 +152,35 @@ jobs:
       - name: 加载自定义配置
         working-directory: /workdir/openwrt
         run: |
+          # r13: LuCI 后端 uhttpd → nginx（移植 shiyu1314/openwrt-onecloud 方案）
+          # 官方 feeds 源码 + 编译期 sed 层（与 nft 完全体/Docker 回滚同构），不替换第三方包
+          test -f feeds/luci/collections/luci/Makefile || { echo "::error::feeds/luci 未就位"; exit 1; }
+          # attendedsysupgrade 与本仓库升级链路冲突，从各 collection 移除（shiyu 验证组合）
+          sed -i '/luci-app-attendedsysupgrade/d' \
+              feeds/luci/collections/luci-nginx/Makefile \
+              feeds/luci/collections/luci-ssl-openssl/Makefile \
+              feeds/luci/collections/luci-ssl/Makefile \
+              feeds/luci/collections/luci/Makefile 2>/dev/null || true
+          sed -i 's/+uhttpd /+luci-nginx /g' feeds/luci/collections/luci/Makefile
+          sed -i 's/+uhttpd-mod-ubus //' feeds/luci/collections/luci/Makefile
+          sed -i 's/+uhttpd /+luci-nginx /g' feeds/luci/collections/luci-light/Makefile
+          sed -i "s/+luci /+luci-nginx /g" feeds/luci/collections/luci-ssl-openssl/Makefile
+          sed -i "s/+luci /+luci-nginx /g" feeds/luci/collections/luci-ssl/Makefile
+          sed -i 's/+uhttpd +uhttpd-mod-ubus /+luci-nginx /g' feeds/packages/net/wg-installer/Makefile
+          sed -i 's/+uhttpd-mod-ubus //g' feeds/luci/collections/luci-light/Makefile
+          sed -i 's/+luci-nginx \\$/+luci-nginx/' feeds/luci/collections/luci-light/Makefile
+          # 官方 nginx 包 ubus 并发参数调优（LuCI 流畅度，shiyu 同款；容忍参数改名）
+          sed -i 's/ubus_parallel_req 2/ubus_parallel_req 6/g' feeds/packages/net/nginx/files-luci-support/60_nginx-luci-support 2>/dev/null || true
+          grep -q 'luci-nginx' feeds/luci/collections/luci/Makefile || { echo "::error::luci collection nginx sed 失败"; exit 1; }
+          grep -q 'luci-nginx' feeds/luci/collections/luci-light/Makefile || { echo "::error::luci-light collection nginx sed 失败"; exit 1; }
+          echo "=== r13 nginx sed 完成 ==="
+          grep -n 'luci-nginx' feeds/luci/collections/luci/Makefile feeds/luci/collections/luci-light/Makefile
+          # r13: vermagic 固定（shiyu1314 方案）——kmod 版本串只随 kernel-6.12 HASH 变化，
+          # 配合在线升级/包安装时 kmod 兼容性提升；内核大版本（6.12→6.18）切换时 HASH 必然变化
+          sed -ie 's/^\(.\).*vermagic$/\1cp $(TOPDIR)\/.vermagic $(LINUX_DIR)\/.vermagic/' include/kernel-defaults.mk
+          grep HASH target/linux/generic/kernel-6.12 | awk -F'HASH-' '{print $2}' | awk '{print $1}' | md5sum | awk '{print $1}' > .vermagic
+          grep -q 'cp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic' include/kernel-defaults.mk || { echo "::error::vermagic sed 失败"; exit 1; }
+          echo "=== r13 vermagic 固定: $(cat .vermagic) ==="
           cp $GITHUB_WORKSPACE/recipe/ax6/banner package/base-files/files/etc/banner
           bash $GITHUB_WORKSPACE/recipe/sh/lean2.sh
           bash $GITHUB_WORKSPACE/recipe/sh/new_remove.sh
@@ -208,17 +237,7 @@ jobs:
           # 客户端模式网络配置
           bash $GITHUB_WORKSPACE/recipe/sh/edit_files.sh "${{ env.OWRT_IP }}" "${{ env.OWRT_SERVER_IP }}"
 
-          # r11 LuCI ucode 修复（25.12 apk 体系全线问题）：luci-base 的 postinst（opkg 机制）在 apk 下不执行，
-          # /etc/config/uhttpd 停留在官方模板原样——lua_prefix 指向 /usr/lib/lua/luci/sgi/uhttpd.lua（不存在）；
-          # 且 uhttpd-mod-ucode 独立包未被依赖链拉入（/usr/lib/uhttpd_ucode.so 缺失）→ /cgi-bin/luci 无法分发 → 浏览器 403
-          # 修复：①装 uhttpd-mod-ucode ②files 注入修正版 uhttpd 配置（删 lua_prefix + main 段加 ucode_prefix）
-          grep -q '^CONFIG_PACKAGE_uhttpd-mod-ucode=y' .config || echo 'CONFIG_PACKAGE_uhttpd-mod-ucode=y' >> .config
-          mkdir -p files/etc/config
-          cp -f package/network/services/uhttpd/files/uhttpd.config files/etc/config/uhttpd
-          sed -i -e '/list lua_prefix/d' \
-                 -e 's|^\toption home\t\t/www$|&\n\tlist ucode_prefix\t"/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc"|' \
-                 files/etc/config/uhttpd
-          grep -qP '^\tlist ucode_prefix\t"/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc"' files/etc/config/uhttpd || { echo "::error::uhttpd ucode_prefix 注入失败（非 tab 开头合法 list 行）"; exit 1; }
+          # r13: uhttpd 注入块已删除——LuCI 后端切换 nginx，uhttpd 全家不入选（守卫在"下载编译环境"段）
 
       - name: 下载编译环境
         working-directory: /workdir/openwrt
@@ -238,8 +257,13 @@ jobs:
           fi
           echo "=== iptables 后端选择 ==="
           grep -E "^CONFIG_PACKAGE_iptables(-nft)?=" .config || true
-          # r11 守卫: uhttpd-mod-ucode 必须入选（LuCI ucode 分发依赖 /usr/lib/uhttpd_ucode.so）
-          grep -q '^CONFIG_PACKAGE_uhttpd-mod-ucode=y' .config || { echo "::error::uhttpd-mod-ucode 未入选，LuCI 将 403"; exit 1; }
+          # r13 守卫: nginx 后端必须入选，uhttpd 全家不得残留（luci/luci-light 已 sed 到 luci-nginx）
+          grep -q '^CONFIG_PACKAGE_luci-nginx=y' .config || { echo "::error::luci-nginx 未入选，LuCI 后端缺失"; exit 1; }
+          grep -q '^CONFIG_PACKAGE_nginx=y' .config || { echo "::error::nginx 未入选"; exit 1; }
+          grep -q '^CONFIG_PACKAGE_nginx-mod-luci=y' .config || { echo "::error::nginx-mod-luci 未入选，LuCI 将 403"; exit 1; }
+          if grep -qE '^CONFIG_PACKAGE_uhttpd(-mod-[a-z0-9-]+)?=y' .config; then
+            echo "::error::uhttpd 系被依赖链拉回（r13 要求 nginx 后端独占）:"; grep -E '^CONFIG_PACKAGE_uhttpd' .config; exit 1
+          fi
           echo "=== amlogic target 守卫（defconfig 后必须保留） ==="
           grep -E "^CONFIG_TARGET_amlogic=y" .config || { echo "::error::amlogic target 被 defconfig 清除，注入失败"; exit 1; }
           # 单网口精简守卫：fw3 与 kmod-ipt-ipset 不得被依赖链拉回
@@ -261,7 +285,9 @@ jobs:
 
       - name: 制作直刷包
         run: |
-          bash $GITHUB_WORKSPACE/recipe/sh/convert3.sh
+          # r13: 主仓修复版 convert3——boot 从本次编译产物 p1 提取（原配方静态素材 boot
+          # 内核与 rootfs kmod 断配，线刷即残）+ rootfs 896M + 内核版本硬断言
+          bash $GITHUB_WORKSPACE/scripts/onecloud/convert3.sh
           echo "=== 直刷包产物 ==="
           ls -lh openwrt/bin/targets/*/*/*.burn.img.xz 2>/dev/null || true
 
@@ -303,9 +329,15 @@ jobs:
             源码：immortalwrt
             分支：${{ env.REPO_BRANCH }}
             默认密码：password
-            /dev/root：896M 固定（r12：不再首启自动扩容到整卡；剩余空间可自行分区使用）
+            /dev/root：896M 固定（不再首启自动扩容到整卡；剩余空间可自行分区使用）
             网络模式：客户端模式（唯一网口为 WAN，从上级路由 DHCP 获取 IP；Bypass 别名 192.168.1.2）
             后台/SSH 地址：以上级路由 DHCP 列表为准（上级为 192.168.1.x 网段时也可用 192.168.1.2）
+            ========== r13 变更 ==========
+            LuCI 后端：uhttpd → nginx（luci-nginx，官方源码编译期注入）
+            内核：跟随 immortalwrt 25.12 分支自动更新（vermagic 固定，kmod 跨构建兼容）
+            直刷包：boot 分区与 rootfs 内核同源构建（版本一致性硬断言）
+            新增资产：onecloud-boot.tar.gz（boot 分区内容，供在线升级脚本更新 boot 分区）
+            ⚠️ 本版起 boot/rootfs 配套生成：从旧版固件在线升级需使用 v3 升级脚本（rootfs+boot 双更新）
           artifacts: "openwrt/outfile/*"
 
       - name: SSH 调试
