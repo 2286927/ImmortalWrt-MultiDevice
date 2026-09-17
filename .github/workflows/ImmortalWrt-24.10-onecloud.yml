@@ -1,7 +1,7 @@
 #========================================================================================================================
 # 玩客云（OneCloud / Amlogic S805 meson8b cortex-a5 32位）直刷固件
 # 方案来源：旧仓库 2286927/OneCloud_immortalwrt 成功配方（commit 6cb5de77，2026-04-17 / 05-04 两次编译成功）
-#   1. immortalwrt 官方源码无 amlogic target，必须注入配方仓库的 lede6.6/target/linux/amlogic 树（内核 6.6）
+#   1. immortalwrt 官方源码无 amlogic target，注入 coolsnowwolf/lede master 的 amlogic 树（KERNEL_PATCHVER 改 6.6 与 24.10 generic 匹配；配方仓库仅提供 config/脚本）
 #   2. 配置使用配方仓库 Config/quicker-amlogic.config（32 位 meson8b 专用）
 #   3. convert3.sh 制作 AmlImg 直刷包（含 uboot，双USB公头线刷）
 # 上游适配修复（原 16 连败根因）：vernesong/OpenClash core 分支改版——premium/ 目录删除、classic dev 内核停发，
@@ -92,15 +92,27 @@ jobs:
           chmod +x sh/*.sh
           echo "配方仓库: $(git log -1 --format='%h %s')"
 
-      - name: 注入 amlogic target 树(核心修复)
+      - name: 注入 amlogic target 树(核心修复·lede master 源)
         working-directory: /workdir/openwrt
         run: |
-          mv $GITHUB_WORKSPACE/recipe/lede6.6/target/linux/amlogic target/linux
+          # 24.10 树 generic 为 6.6 内核 → 采用 lede master amlogic 树的 6.6 testing（活跃维护源）
+          # 与 25.12 线同源 coolsnowwolf/lede；配方仓库(recipe)仅提供 config/脚本/files
+          git clone --depth 1 https://github.com/coolsnowwolf/lede /tmp/lede-tree
+          rm -rf target/linux/amlogic
+          mv /tmp/lede-tree/target/linux/amlogic target/linux/amlogic
+          rm -rf /tmp/lede-tree
+          sed -i -e "s/KERNEL_PATCHVER:=6.18/KERNEL_PATCHVER:=6.6/" \
+                 -e "/KERNEL_TESTING_PATCHVER/d" \
+                 -e "/autocore-arm/d" \
+                 -e "s/ pci pcie//" \
+                 target/linux/amlogic/Makefile
           chmod -Rf 755 target/linux/amlogic
           echo "=== amlogic target 树 ==="
-          ls -l target/linux/amlogic
+          ls target/linux/amlogic
           echo "=== 树内核版本 ==="
           grep -E "KERNEL_PATCHVER" target/linux/amlogic/Makefile
+          test -d target/linux/amlogic/patches-6.6 || { echo "::error::patches-6.6 缺失"; exit 1; }
+          test -f target/linux/amlogic/meson8b/target.mk || { echo "::error::meson8b 缺失"; exit 1; }
 
       - name: 设置订阅源
         working-directory: /workdir/openwrt
