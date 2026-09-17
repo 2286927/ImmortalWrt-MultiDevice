@@ -262,7 +262,7 @@ jobs:
           grep -E "^CONFIG_PACKAGE_iptables(-nft)?=" .config || true
           # r13 守卫: nginx 后端必须入选，uhttpd 全家不得残留（luci/luci-light 已 sed 到 luci-nginx）
           grep -q '^CONFIG_PACKAGE_luci-nginx=y' .config || { echo "::error::luci-nginx 未入选，LuCI 后端缺失"; exit 1; }
-          grep -q '^CONFIG_PACKAGE_nginx=y' .config || { echo "::error::nginx 未入选"; exit 1; }
+          grep -q '^CONFIG_PACKAGE_nginx-ssl=y' .config || { echo "::error::nginx-ssl 未入选（25.12 PROVIDES:nginx 由 nginx-ssl 默认变体提供）"; exit 1; }
           grep -q '^CONFIG_PACKAGE_nginx-mod-luci=y' .config || { echo "::error::nginx-mod-luci 未入选，LuCI 将 403"; exit 1; }
           if grep -qE '^CONFIG_PACKAGE_uhttpd(-mod-[a-z0-9-]+)?=y' .config; then
             echo "::error::uhttpd 系被依赖链拉回（r13 要求 nginx 后端独占）:"; grep -E '^CONFIG_PACKAGE_uhttpd' .config; exit 1
