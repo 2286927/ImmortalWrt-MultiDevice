@@ -88,6 +88,12 @@ jobs:
           cd recipe && git checkout $RECIPE_REF
           # 配方脚本内部的 $GITHUB_WORKSPACE/xxx 引用统一指向 recipe 子目录
           sed -E -i 's#\$GITHUB_WORKSPACE/(sh|lede6|onecloud|ax6|Config|Ubuntu)#\$GITHUB_WORKSPACE/recipe/\1#g' sh/*.sh
+          # r13.4: 剔除 qmodem 包源（上游 964d8dd325 3.4.0_rc3 包族重构撞 UPDATE_PACKAGE 滚动拉取，
+          # 玩客云无 SIM 卡槽纯冗余负载；与 25.12 线 r13.1 qmodem 禁用对齐）
+          sed -i '/UPDATE_PACKAGE.*[Qq]modem/d' sh/Packages.sh
+          if grep -qi 'qmodem' sh/Packages.sh; then
+            echo "::error::Packages.sh 仍有 qmodem 引用:"; grep -in qmodem sh/Packages.sh; exit 1
+          fi
           dos2unix sh/*.sh
           chmod +x sh/*.sh
           echo "配方仓库: $(git log -1 --format='%h %s')"
@@ -170,6 +176,8 @@ jobs:
           rm -rf package/OpenWrt-nikki
           rm -rf ./tmp* ./.config*
           cp $GITHUB_WORKSPACE/${{ env.OWRT_CFG }} .config
+          # r13.4: qmodem 全家显式禁用兜底（包源已剔除，防 config 显式选中残留）
+          sed -i -E 's/^CONFIG_PACKAGE_(qmodem|luci-app-qmodem|luci-app-qmodem-next)=y$/# CONFIG_PACKAGE_\1 is not set/' .config
           # 用户决策弃用 fw3+legacy（与 25.12 对齐）：删除 legacy 后端用户态工具链，iptables 统一 nft 后端；
           # 补 nft 原生 tproxy/socket 内核模块（fullcone 配方已有 kmod-nft-fullcone）
           sed -i -E '/^CONFIG_PACKAGE_(iptables|ip6tables)-(mod-[a-z0-9-]+|zz-legacy|legacy)=y$/d' .config
@@ -206,6 +214,10 @@ jobs:
         working-directory: /workdir/openwrt
         run: |
           make defconfig
+          # r13.4 守卫: qmodem 系不得被依赖链拉回（玩客云无 SIM 槽）
+          if grep -qE '^CONFIG_PACKAGE_.*[Qq]modem=y' .config; then
+            echo "::error::qmodem 系被依赖链拉回:"; grep -E '^CONFIG_PACKAGE_.*[Qq]modem' .config; exit 1
+          fi
           # kconfig VARIANT 校正: make defconfig 把 .config 当默认建议，变体自动选择偏向 iptables，
           # 在 defconfig 定型后强制切回 nftables（后续 syncconfig 保留显式值）
           sed -i 's/^CONFIG_PACKAGE_miniupnpd-iptables=y$/# CONFIG_PACKAGE_miniupnpd-iptables is not set/' .config
