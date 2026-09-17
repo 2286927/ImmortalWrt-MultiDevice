@@ -264,6 +264,10 @@ jobs:
           if grep -qE '^CONFIG_PACKAGE_uhttpd(-mod-[a-z0-9-]+)?=y' .config; then
             echo "::error::uhttpd 系被依赖链拉回（r13 要求 nginx 后端独占）:"; grep -E '^CONFIG_PACKAGE_uhttpd' .config; exit 1
           fi
+          # r13 守卫: qmodem 全家零命中（无蜂窝模块，config 已显式 not set；被依赖链拉回即失败）
+          if grep -qE '^CONFIG_PACKAGE_(qmodem|luci-app-qmodem(-next)?)=y' .config; then
+            echo "::error::qmodem 系被依赖链拉回（设备无蜂窝模块，明确不需要）:"; grep -E '^CONFIG_PACKAGE_.*qmodem' .config; exit 1
+          fi
           echo "=== amlogic target 守卫（defconfig 后必须保留） ==="
           grep -E "^CONFIG_TARGET_amlogic=y" .config || { echo "::error::amlogic target 被 defconfig 清除，注入失败"; exit 1; }
           # 单网口精简守卫：fw3 与 kmod-ipt-ipset 不得被依赖链拉回
