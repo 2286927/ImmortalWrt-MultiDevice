@@ -28,7 +28,8 @@ env:
   RECIPE_REF: 390f150fc256e38a4b21311cb1cbb9f3d367c590
   OWRT_IP: 172.16.8.1
   OWRT_NAME: OneCloud
-  OWRT_CFG: recipe/Config/quicker-amlogic.config
+  # r12: 25.12 线独立配置（quicker-amlogic.config 分叉，rootfs 896M + qmodem 禁用）
+  OWRT_CFG: config/onecloud-25.12.config
   OWRT_FILES: recipe/onecloud/files
   TZ: Asia/Shanghai
 
@@ -193,6 +194,11 @@ jobs:
           # 去掉多余的dhcp文件，让首次启动有dhcp服务
           rm -rf ./files/etc/config/dhcp
 
+          # r12: rootfs 固定 896M——去掉 rc.local 首启 resize2fs 扩容（不再占满整卡 eMMC）
+          sed -i -e '/remount rw/d' -e '/resize2fs/d' ./files/etc/rc.local
+          grep -q resize2fs ./files/etc/rc.local && { echo "::error::rc.local 仍含 resize2fs"; exit 1; } || true
+          grep -q "1.sh" ./files/etc/rc.local || echo "警告: rc.local 未见 1.sh（初始化链路核对）"
+
           # openclash 32 位内核（修复版：统一 meta(mihomo) 内核）
           bash $GITHUB_WORKSPACE/scripts/onecloud/openclash32-fixed.sh
 
@@ -297,6 +303,7 @@ jobs:
             源码：immortalwrt
             分支：${{ env.REPO_BRANCH }}
             默认密码：password
+            /dev/root：896M 固定（r12：不再首启自动扩容到整卡；剩余空间可自行分区使用）
             网络模式：客户端模式（唯一网口为 WAN，从上级路由 DHCP 获取 IP；Bypass 别名 192.168.1.2）
             后台/SSH 地址：以上级路由 DHCP 列表为准（上级为 192.168.1.x 网段时也可用 192.168.1.2）
           artifacts: "openwrt/outfile/*"
