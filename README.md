@@ -14,7 +14,7 @@
 | OCTOPUS | AMLogic S912（ARMv8） | 24.10 / 25.12 | 单网口定制 |
 | 玩客云 OneCloud | AMLogic S805 | 24.10 / 25.12 | 单网口客户端模式，eMMC |
 | R68S | Rockchip RK3328 | 24.10 / 25.12 | 双千兆 |
-| CMCC RAX3000M | MediaTek MT7986（Filogic 830） | 24.10 / 25.12 | NAND 版 |
+| CMCC RAX3000M | MediaTek MT7986（Filogic 830） | 24.10 / 25.12 | eMMC 版 |
 
 ## 主要功能
 
