@@ -23,8 +23,10 @@ BOOT_DEV="/dev/mmcblk1p1"
 ROOT_DEV="/dev/mmcblk1p2"
 REBOOT="no"
 
+CHECK_ONLY="no"
 for a in "$@"; do
   case "$a" in
+    --check) CHECK_ONLY="yes" ;;
     --reboot) REBOOT="yes" ;;
     --url=*) MANUAL_URL="${a#--url=}" ;;
     --url) shift_next=1 ;;
@@ -98,6 +100,21 @@ tar -tzf "$TGZ" ./etc/config/nginx >/dev/null 2>&1 && PKG_HAS_NGINX=1
 tar -tzf "$TGZ" ./etc/config/uhttpd >/dev/null 2>&1 && PKG_HAS_UHTTPD=1
 [ "$PKG_HAS_NGINX" = "0" ] && [ "$PKG_HAS_UHTTPD" = "0" ] && die "包内既无 nginx 也无 uhttpd 配置，未知固件，拒绝升级"
 
+# ---------------- boot 分区可挂载预检（vfat 支持验证，任何模式都做） ----------------
+BOOT_MNT_TEST=/mnt/boot-precheck-$$
+mkdir -p "$BOOT_MNT_TEST"
+if mount "$BOOT_DEV" "$BOOT_MNT_TEST" 2>/dev/null; then
+  if [ -f "$BOOT_MNT_TEST/uImage" ]; then
+    log "boot 分区挂载正常，当前 uImage 在位（$(ls -lh "$BOOT_MNT_TEST/uImage" | awk '{print $5}')）"
+  else
+    log "警告: boot 分区可挂载但根目录未见 uImage（布局核对）"
+  fi
+  umount "$BOOT_MNT_TEST"
+else
+  die "boot 分区挂载失败（内核缺 vfat/fat 支持？）——boot 更新无法进行，请勿继续，反馈或改用线刷"
+fi
+rmdir "$BOOT_MNT_TEST" 2>/dev/null
+
 # ---------------- 包内自洽性校验：boot 内核 == rootfs kmod ----------------
 log "校验 boot/rootfs 内核版本配套性…"
 PKG_KV=$(tar -tzf "$TGZ" | sed -n 's|^\./lib/modules/||p' | cut -d/ -f1 | grep -v '^$' | head -n1)
@@ -111,6 +128,14 @@ log "rootfs kmod: $PKG_KV | boot 镜像名: $BOOT_NAME"
 echo "$BOOT_NAME" | grep -q "$PKG_KV" || die "boot 内核($BOOT_NAME) 与 rootfs kmod($PKG_KV) 不配套，拒绝升级"
 rm -rf "$WORK/boot-extract"
 rm -rf "$WORK/boot-extract"
+
+# ---------------- --check 出口（未做任何写盘操作） ----------------
+if [ "$CHECK_ONLY" = "yes" ]; then
+  log "=========================================="
+  log "--check 全部通过：预检/包完整性/毒行防线/内核配套性/boot 挂载均 OK"
+  log "本机未做任何修改。确认无误后执行正式升级: sh $0 --reboot"
+  exit 0
+fi
 
 # ---------------- 备份 ----------------
 mkdir -p "$BACKUP"
