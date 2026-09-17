@@ -202,6 +202,18 @@ jobs:
           # 客户端模式网络配置
           bash $GITHUB_WORKSPACE/recipe/sh/edit_files.sh "${{ env.OWRT_IP }}" "${{ env.OWRT_SERVER_IP }}"
 
+          # r11 LuCI ucode 修复（25.12 apk 体系全线问题）：luci-base 的 postinst（opkg 机制）在 apk 下不执行，
+          # /etc/config/uhttpd 停留在官方模板原样——lua_prefix 指向 /usr/lib/lua/luci/sgi/uhttpd.lua（不存在）；
+          # 且 uhttpd-mod-ucode 独立包未被依赖链拉入（/usr/lib/uhttpd_ucode.so 缺失）→ /cgi-bin/luci 无法分发 → 浏览器 403
+          # 修复：①装 uhttpd-mod-ucode ②files 注入修正版 uhttpd 配置（删 lua_prefix + main 段加 ucode_prefix）
+          grep -q '^CONFIG_PACKAGE_uhttpd-mod-ucode=y' .config || echo 'CONFIG_PACKAGE_uhttpd-mod-ucode=y' >> .config
+          mkdir -p files/etc/config
+          cp -f package/network/services/uhttpd/files/uhttpd.config files/etc/config/uhttpd
+          sed -i -e '/list lua_prefix/d' \
+                 -e '/option home/a\tlist ucode_prefix\t"/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc"' \
+                 files/etc/config/uhttpd
+          grep -q 'ucode_prefix.*uhttpd.uc' files/etc/config/uhttpd || { echo "::error::uhttpd ucode_prefix 注入失败"; exit 1; }
+
       - name: 下载编译环境
         working-directory: /workdir/openwrt
         run: |
@@ -220,6 +232,8 @@ jobs:
           fi
           echo "=== iptables 后端选择 ==="
           grep -E "^CONFIG_PACKAGE_iptables(-nft)?=" .config || true
+          # r11 守卫: uhttpd-mod-ucode 必须入选（LuCI ucode 分发依赖 /usr/lib/uhttpd_ucode.so）
+          grep -q '^CONFIG_PACKAGE_uhttpd-mod-ucode=y' .config || { echo "::error::uhttpd-mod-ucode 未入选，LuCI 将 403"; exit 1; }
           echo "=== amlogic target 守卫（defconfig 后必须保留） ==="
           grep -E "^CONFIG_TARGET_amlogic=y" .config || { echo "::error::amlogic target 被 defconfig 清除，注入失败"; exit 1; }
           # 单网口精简守卫：fw3 与 kmod-ipt-ipset 不得被依赖链拉回
@@ -283,7 +297,8 @@ jobs:
             源码：immortalwrt
             分支：${{ env.REPO_BRANCH }}
             默认密码：password
-            默认地址：${{ env.OWRT_IP }}
+            网络模式：客户端模式（唯一网口为 WAN，从上级路由 DHCP 获取 IP；Bypass 别名 192.168.1.2）
+            后台/SSH 地址：以上级路由 DHCP 列表为准（上级为 192.168.1.x 网段时也可用 192.168.1.2）
           artifacts: "openwrt/outfile/*"
 
       - name: SSH 调试
