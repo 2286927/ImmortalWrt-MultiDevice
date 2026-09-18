@@ -160,32 +160,6 @@ jobs:
       - name: 加载自定义配置
         working-directory: /workdir/openwrt
         run: |
-          # r13: LuCI 后端 uhttpd → nginx（openwrt/luci openwrt-25.12 真实结构）
-          # 25.12 依赖链: luci → luci-light → uhttpd；luci collection 已不含 uhttpd
-          test -f feeds/luci/collections/luci-light/Makefile || { echo "::error::feeds/luci 未就位"; exit 1; }
-          # attendedsysupgrade 在 25.12 已被 luci-app-package-manager 取代（容忍处理，无残留即过）
-          sed -i '/luci-app-attendedsysupgrade/d' \
-              feeds/luci/collections/luci-nginx/Makefile \
-              feeds/luci/collections/luci-light/Makefile \
-              feeds/luci/collections/luci/Makefile 2>/dev/null || true
-          # luci-light: +uhttpd（续行 \ 或行尾两种形态）→ +luci-nginx；uhttpd-mod-ubus 独占行删除；
-          # 删行后 +luci-nginx 成为最后一个依赖，去掉行尾续行符（保持 make 语法完整）
-          sed -i -e 's/^\([[:space:]]*\)+uhttpd[[:space:]]\+\\$/\1+luci-nginx \\/' \
-                 -e 's/^\([[:space:]]*\)+uhttpd$/\1+luci-nginx/' \
-                 -e '/^[[:space:]]*+uhttpd-mod-ubus$/d' \
-                 -e 's/^\([[:space:]]*\)+luci-nginx[[:space:]]\+\\$/\1+luci-nginx/' \
-              feeds/luci/collections/luci-light/Makefile
-          # wg-installer-server（packages feed，单行 DEPENDS）: +uhttpd +uhttpd-mod-ubus → +luci-nginx
-          sed -i 's/+uhttpd +uhttpd-mod-ubus /+luci-nginx /g' feeds/packages/net/wg-installer/Makefile 2>/dev/null || true
-          # 官方 nginx 包 ubus 并发参数调优（容忍参数改名）
-          sed -i 's/ubus_parallel_req 2/ubus_parallel_req 6/g' feeds/packages/net/nginx/files-luci-support/60_nginx-luci-support 2>/dev/null || true
-          # 守卫: luci-light 已切 luci-nginx 且 uhttpd 系零残留
-          grep -q 'luci-nginx' feeds/luci/collections/luci-light/Makefile || { echo "::error::luci-light nginx sed 失败"; exit 1; }
-          if grep -q 'uhttpd' feeds/luci/collections/luci-light/Makefile; then
-            echo "::error::luci-light 仍有 uhttpd 残留:"; grep -n uhttpd feeds/luci/collections/luci-light/Makefile; exit 1
-          fi
-          echo "=== r13 nginx sed 完成（luci → luci-light → luci-nginx → nginx）==="
-          cat feeds/luci/collections/luci-light/Makefile
           # r13: vermagic 固定（shiyu1314 方案）——kmod 版本串只随 kernel-6.12 HASH 变化，
           # 配合在线升级/包安装时 kmod 兼容性提升；内核大版本（6.12→6.18）切换时 HASH 必然变化
           sed -ie 's/^\(.\).*vermagic$/\1cp $(TOPDIR)\/.vermagic $(LINUX_DIR)\/.vermagic/' include/kernel-defaults.mk
@@ -211,9 +185,6 @@ jobs:
 
           rm -rf ./tmp* ./.config*
           cp $GITHUB_WORKSPACE/${{ env.OWRT_CFG }} .config
-          # r14: uhttpd 显式行物理强清（r13.5 教训: 残留 =y 经 kconfig select 强制拉回
-          # uhttpd 主包, select 无视 not set 行；nginx 后端要求 uhttpd 系零入选）
-          sed -i '/^CONFIG_PACKAGE_uhttpd/d' .config
           # r10修复(用户决策弃用 fw3+legacy): 25.12 APK 体系中 iptables-mod-* 全系硬依赖 iptables-zz-legacy，
           # 与 iptables-nft 互斥；且 legacy 后端在新分支软件生态兼容性差。统一弃用 legacy 后端：
           # 1) 删除全部 iptables/ip6tables 的 mod-* 与 zz-legacy 条目 2) iptables-nft 作为唯一后端
@@ -251,7 +222,17 @@ jobs:
           # 客户端模式网络配置
           bash $GITHUB_WORKSPACE/recipe/sh/edit_files.sh "${{ env.OWRT_IP }}" "${{ env.OWRT_SERVER_IP }}"
 
-          # r13: uhttpd 注入块已删除——LuCI 后端切换 nginx，uhttpd 全家不入选（守卫在"下载编译环境"段）
+          # r11 LuCI ucode 修复（25.12 apk 体系全线问题）：luci-base 的 postinst（opkg 机制）在 apk 下不执行，
+          # /etc/config/uhttpd 停留在官方模板原样——lua_prefix 指向 /usr/lib/lua/luci/sgi/uhttpd.lua（不存在）；
+          # 且 uhttpd-mod-ucode 独立包未被依赖链拉入（/usr/lib/uhttpd_ucode.so 缺失）→ /cgi-bin/luci 无法分发 → 浏览器 403
+          # 修复：①装 uhttpd-mod-ucode ②files 注入修正版 uhttpd 配置（删 lua_prefix + main 段加 ucode_prefix）
+          grep -q '^CONFIG_PACKAGE_uhttpd-mod-ucode=y' .config || echo 'CONFIG_PACKAGE_uhttpd-mod-ucode=y' >> .config
+          mkdir -p files/etc/config
+          cp -f package/network/services/uhttpd/files/uhttpd.config files/etc/config/uhttpd
+          sed -i -e '/list lua_prefix/d' \
+                 -e '/option home/a\tlist ucode_prefix\t"/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc"' \
+                 files/etc/config/uhttpd
+          grep -q 'ucode_prefix.*uhttpd.uc' files/etc/config/uhttpd || { echo "::error::uhttpd ucode_prefix 注入失败"; exit 1; }
 
       - name: 下载编译环境
         working-directory: /workdir/openwrt
@@ -271,13 +252,8 @@ jobs:
           fi
           echo "=== iptables 后端选择 ==="
           grep -E "^CONFIG_PACKAGE_iptables(-nft)?=" .config || true
-          # r13 守卫: nginx 后端必须入选，uhttpd 全家不得残留（luci/luci-light 已 sed 到 luci-nginx）
-          grep -q '^CONFIG_PACKAGE_luci-nginx=y' .config || { echo "::error::luci-nginx 未入选，LuCI 后端缺失"; exit 1; }
-          grep -q '^CONFIG_PACKAGE_nginx-ssl=y' .config || { echo "::error::nginx-ssl 未入选（25.12 PROVIDES:nginx 由 nginx-ssl 默认变体提供）"; exit 1; }
-          grep -q '^CONFIG_PACKAGE_nginx-mod-luci=y' .config || { echo "::error::nginx-mod-luci 未入选，LuCI 将 403"; exit 1; }
-          if grep -qE '^CONFIG_PACKAGE_(uhttpd|luci-app-uhttpd)(-mod-[a-z0-9-]+)?=y' .config; then
-            echo "::error::uhttpd 系被依赖链拉回（r13 要求 nginx 后端独占）:"; grep -E '^CONFIG_PACKAGE_(uhttpd|luci-app-uhttpd)' .config; exit 1
-          fi
+          # r11 守卫: uhttpd-mod-ucode 必须入选（LuCI ucode 分发依赖 /usr/lib/uhttpd_ucode.so）
+          grep -q '^CONFIG_PACKAGE_uhttpd-mod-ucode=y' .config || { echo "::error::uhttpd-mod-ucode 未入选，LuCI 将 403"; exit 1; }
           # r13 守卫: qmodem 全家零命中（无蜂窝模块，config 已显式 not set；被依赖链拉回即失败）
           if grep -qE '^CONFIG_PACKAGE_(qmodem|luci-app-qmodem(-next)?)=y' .config; then
             echo "::error::qmodem 系被依赖链拉回（设备无蜂窝模块，明确不需要）:"; grep -E '^CONFIG_PACKAGE_.*qmodem' .config; exit 1
@@ -351,7 +327,7 @@ jobs:
             网络模式：客户端模式（唯一网口为 WAN，从上级路由 DHCP 获取 IP；Bypass 别名 192.168.1.2）
             后台/SSH 地址：以上级路由 DHCP 列表为准（上级为 192.168.1.x 网段时也可用 192.168.1.2）
             ========== r13 变更 ==========
-            LuCI 后端：uhttpd → nginx（luci-nginx，官方源码编译期注入）
+            LuCI 后端：官方默认 uhttpd（r16 回退 nginx 独占实验，跟随上游零侵入）
             内核：跟随 immortalwrt 25.12 分支自动更新（vermagic 固定，kmod 跨构建兼容）
             直刷包：boot 分区与 rootfs 内核同源构建（版本一致性硬断言）
             新增资产：onecloud-boot.tar.gz（boot 分区内容，供在线升级脚本更新 boot 分区）
