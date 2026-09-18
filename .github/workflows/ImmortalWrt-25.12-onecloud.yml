@@ -211,6 +211,9 @@ jobs:
 
           rm -rf ./tmp* ./.config*
           cp $GITHUB_WORKSPACE/${{ env.OWRT_CFG }} .config
+          # r14: uhttpd 显式行物理强清（r13.5 教训: 残留 =y 经 kconfig select 强制拉回
+          # uhttpd 主包, select 无视 not set 行；nginx 后端要求 uhttpd 系零入选）
+          sed -i '/^CONFIG_PACKAGE_uhttpd/d' .config
           # r10修复(用户决策弃用 fw3+legacy): 25.12 APK 体系中 iptables-mod-* 全系硬依赖 iptables-zz-legacy，
           # 与 iptables-nft 互斥；且 legacy 后端在新分支软件生态兼容性差。统一弃用 legacy 后端：
           # 1) 删除全部 iptables/ip6tables 的 mod-* 与 zz-legacy 条目 2) iptables-nft 作为唯一后端
@@ -272,8 +275,8 @@ jobs:
           grep -q '^CONFIG_PACKAGE_luci-nginx=y' .config || { echo "::error::luci-nginx 未入选，LuCI 后端缺失"; exit 1; }
           grep -q '^CONFIG_PACKAGE_nginx-ssl=y' .config || { echo "::error::nginx-ssl 未入选（25.12 PROVIDES:nginx 由 nginx-ssl 默认变体提供）"; exit 1; }
           grep -q '^CONFIG_PACKAGE_nginx-mod-luci=y' .config || { echo "::error::nginx-mod-luci 未入选，LuCI 将 403"; exit 1; }
-          if grep -qE '^CONFIG_PACKAGE_uhttpd(-mod-[a-z0-9-]+)?=y' .config; then
-            echo "::error::uhttpd 系被依赖链拉回（r13 要求 nginx 后端独占）:"; grep -E '^CONFIG_PACKAGE_uhttpd' .config; exit 1
+          if grep -qE '^CONFIG_PACKAGE_(uhttpd|luci-app-uhttpd)(-mod-[a-z0-9-]+)?=y' .config; then
+            echo "::error::uhttpd 系被依赖链拉回（r13 要求 nginx 后端独占）:"; grep -E '^CONFIG_PACKAGE_(uhttpd|luci-app-uhttpd)' .config; exit 1
           fi
           # r13 守卫: qmodem 全家零命中（无蜂窝模块，config 已显式 not set；被依赖链拉回即失败）
           if grep -qE '^CONFIG_PACKAGE_(qmodem|luci-app-qmodem(-next)?)=y' .config; then
