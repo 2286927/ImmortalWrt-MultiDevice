@@ -87,6 +87,14 @@ jobs:
         run: |
           git clone $RECIPE_REPO recipe
           cd recipe && git checkout $RECIPE_REF
+          # r13.5: 剔除 qmodem 包源（配方 UPDATE_PACKAGE 滚动拉取 FUjr/QModem main，
+          # 上游 964d8dd325 3.4.0_rc3 包族重构后 qmodem→luci-app-qmodem↔next→uhttpd 依赖链
+          # 把 uhttpd 拉回并触发递归依赖 ERROR；设备无 SIM 卡槽，与 24.10 线 r13.4 对齐）
+          sed -i '/UPDATE_PACKAGE.*[Qq]modem/d' sh/*.sh
+          if grep -riq 'qmodem' sh/; then
+            echo "::error::配方脚本仍有 qmodem 引用:"; grep -rin qmodem sh/; exit 1
+          fi
+
           # 配方脚本内部的 $GITHUB_WORKSPACE/xxx 引用统一指向 recipe 子目录
           sed -E -i 's#\$GITHUB_WORKSPACE/(sh|lede6|onecloud|ax6|Config|Ubuntu)#\$GITHUB_WORKSPACE/recipe/\1#g' sh/*.sh
           dos2unix sh/*.sh
