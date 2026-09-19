@@ -78,11 +78,14 @@ for f in openwrt/bin/targets/*/*/*.burn.img; do
   sha256sum "$f" >"${f}.sha"
   xz -9 --threads=0 --compress "$f"
 done
-# r18 修复：文件 glob 零匹配传字面量（r17 实证死亡点），改为先定位目录再 mv
+sudo rm -rf openwrt/bin/targets/*/*/*.img
+sudo rm -rf openwrt/bin/targets/*/*/*.gz
+# r19 修复（r18 实证死亡点/第四雷）：rm *.gz 会误杀刚归档的 onecloud-boot.tar.gz
+# （同为 .gz 后缀；r17 死在更早的 mv 从未走到此行，故雷被掩盖）——mv 必须在清理之后
 tgt=$(ls -d openwrt/bin/targets/*/*/ | head -n1)
 test -n "$tgt" || { echo "::error::bin/targets 无产物目录"; exit 1; }
 mv onecloud-boot.tar.gz "$tgt"
-sudo rm -rf openwrt/bin/targets/*/*/*.img
-sudo rm -rf openwrt/bin/targets/*/*/*.gz
+# 归档硬断言：任何静默丢失在此明确报错，不让 ls glob 零匹配背锅
+test -f "${tgt}onecloud-boot.tar.gz" || { echo "::error::onecloud-boot.tar.gz 归档丢失"; exit 1; }
 echo "=== 直刷包与 boot 资产 ==="
 ls -lh openwrt/bin/targets/*/*/*.burn.img.xz openwrt/bin/targets/*/*/onecloud-boot.tar.gz
