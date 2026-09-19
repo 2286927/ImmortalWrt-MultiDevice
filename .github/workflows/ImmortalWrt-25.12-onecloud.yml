@@ -229,9 +229,14 @@ jobs:
           grep -q '^CONFIG_PACKAGE_uhttpd-mod-ucode=y' .config || echo 'CONFIG_PACKAGE_uhttpd-mod-ucode=y' >> .config
           mkdir -p files/etc/config
           cp -f package/network/services/uhttpd/files/uhttpd.config files/etc/config/uhttpd
-          sed -i -e '/list lua_prefix/d' \
-                 -e '/option home/a\tlist ucode_prefix\t"/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc"' \
-                 files/etc/config/uhttpd
+          sed -i '/list lua_prefix/d' files/etc/config/uhttpd
+          # r21 修复（第六雷）：GNU sed a\ 文本中 \t 被字面化为字母 t，曾写出非法行
+          # "tlist ucode_prefix ..."（r11~r20 包内实锤，uci 无法解析）——改 awk printf 写真 TAB
+          awk '{print} /option home/{printf "\tlist ucode_prefix\t\"/cgi-bin/luci=/usr/share/ucode/luci/uhttpd.uc\"\n"}' \
+            files/etc/config/uhttpd > files/etc/config/uhttpd.tmp && mv files/etc/config/uhttpd.tmp files/etc/config/uhttpd
+          TAB=$(printf '\t')
+          grep -q "^${TAB}list ucode_prefix" files/etc/config/uhttpd || { echo "::error::ucode_prefix 行首非 TAB（\\t 字面化回归）"; exit 1; }
+          grep -q '^tlist' files/etc/config/uhttpd && { echo "::error::tlist 字面化坏行残留"; exit 1; } || true
           grep -q 'ucode_prefix.*uhttpd.uc' files/etc/config/uhttpd || { echo "::error::uhttpd ucode_prefix 注入失败"; exit 1; }
 
       - name: 下载编译环境
