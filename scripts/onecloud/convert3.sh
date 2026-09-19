@@ -78,7 +78,10 @@ for f in openwrt/bin/targets/*/*/*.burn.img; do
   sha256sum "$f" >"${f}.sha"
   xz -9 --threads=0 --compress "$f"
 done
-mv onecloud-boot.tar.gz openwrt/bin/targets/*/*/onecloud-boot.tar.gz
+# r18 修复：文件 glob 零匹配传字面量（r17 实证死亡点），改为先定位目录再 mv
+tgt=$(ls -d openwrt/bin/targets/*/*/ | head -n1)
+test -n "$tgt" || { echo "::error::bin/targets 无产物目录"; exit 1; }
+mv onecloud-boot.tar.gz "$tgt"
 sudo rm -rf openwrt/bin/targets/*/*/*.img
 sudo rm -rf openwrt/bin/targets/*/*/*.gz
 echo "=== 直刷包与 boot 资产 ==="
