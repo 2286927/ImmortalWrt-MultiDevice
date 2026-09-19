@@ -39,7 +39,7 @@ permissions:
 jobs:
   build-onecloud:
     name: 玩客云 amlogic 直刷固件
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: 清理服务器空间(Ubuntu)
         uses: rmoyulong/free-disk-space@main
@@ -292,6 +292,8 @@ jobs:
           mkdir outfile
           cp -rf bin/targets/*/*/*.tar ./outfile
           cp -rf bin/targets/*/*/*.xz ./outfile
+          # r20 修复（第五雷）：boot 资产以 .gz 直接产出，原 cp 列表只收 .tar/.xz 漏收
+          cp -rf bin/targets/*/*/onecloud-boot.tar.gz ./outfile
           cp -rf .config ./outfile/config.txt
           rm -rf bin/targets/*/*/packages
 
