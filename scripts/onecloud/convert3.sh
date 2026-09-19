@@ -31,14 +31,18 @@ ls -la boot_mnt
 echo "=== 本次产物 p2(rootfs) 关键内容 ==="
 ls img/lib/modules/ || true
 
-# ---- r13 断言1：boot 分区完整性 ----
+# ---- r13 断言1：boot 分区完整性（r17 修正：immortalwrt 25.12 官方 boot 布局
+# 为 boot.scr+dtb+uImage 三件套，无也不需要 uInitrd——uInitrd 是旧配方/Armbian
+# 静态素材遗留概念；官方 boot.scr 与官方布局自洽，不引用 uInitrd）----
 test -f boot_mnt/uImage || { echo "::error::p1 缺 uImage，boot 提取方案失效"; exit 1; }
-test -f boot_mnt/uInitrd || { echo "::error::p1 缺 uInitrd"; exit 1; }
+test -f boot_mnt/boot.scr || { echo "::error::p1 缺 boot.scr，uboot 引导缺失"; exit 1; }
+test -f boot_mnt/dtb || { echo "::error::p1 缺 dtb，设备树缺失"; exit 1; }
+test -f boot_mnt/uInitrd && echo "NOTE: p1 含 uInitrd（随官方布局）" || true
 # ---- r13 断言2：boot 内核与 rootfs kmod 版本一致 ----
 KV_ROOTFS=$(ls img/lib/modules/ | head -n1)
 KV_BOOT=$(strings boot_mnt/uImage | grep -m1 -o 'Linux version [0-9][^ ]*')
 echo "rootfs kmod: $KV_ROOTFS | boot 内核: $KV_BOOT"
-echo "$KV_BOOT" | grep -q " $KV_ROOTFS " || { echo "::error::boot 内核($KV_BOOT) 与 rootfs kmod($KV_ROOTFS) 不匹配"; exit 1; }
+echo "$KV_BOOT" | grep -q "Linux version $KV_ROOTFS" || { echo "::error::boot 内核($KV_BOOT) 与 rootfs kmod($KV_ROOTFS) 不匹配"; exit 1; }
 
 # ---- 在线升级资产：boot 分区内容打包 ----
 sudo tar -czf onecloud-boot.tar.gz -C boot_mnt .
