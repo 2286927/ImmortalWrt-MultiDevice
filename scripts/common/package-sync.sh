@@ -144,7 +144,7 @@ luci-app-istoreenhance luci-app-tailscale
 # ---------- 网盘/NAS/文件服务 ----------
 alist baidudrive luci-app-baidudrive baidusdk
 luci-app-clouddrive2 luci-app-chinesesubfinder luci-app-gogs luci-app-gowebdav
-webd luci-app-webd luci-app-kodexplorer verysync
+webd luci-app-webd verysync
 luci-app-verysync quickfile luci-app-quickfile openlist2
 luci-app-openlist2 baidupcs-web luci-app-baidupcs-web
 # ---------- Docker 管理增强 ----------
