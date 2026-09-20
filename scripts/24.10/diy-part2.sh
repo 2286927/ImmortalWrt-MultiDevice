@@ -3,7 +3,7 @@
 # ImmortalWrt DIY 脚本 2（feeds 更新之后、生成编译配置之前执行）
 #  1) 修改默认 LAN IP / 主机名（与 workflow env LAN_IP/LAN_HOSTNAME 同源，默认 172.16.7.1 / CMCC-RAX3000M）
 #  2) 从 kenzok8/small-package 导入第三方软件包，并自动与
-#     官方（源码树 + feeds）去重：官方已有的一律使用官方版本
+#     官方同名清理（v2.2 第三方优先）：与第三方重复时移除官方同名，使用第三方版本
 #=============================================================
 
 echo "===== diy-part2.sh（24.10）开始执行 ====="
@@ -90,7 +90,7 @@ SINGLE_FW_EOF
     echo ">>> 单网口定制完成（lan 已移除，wan/wan6 归 lan 域）"
 fi
 
-# ── 2. 第三方软件包导入 + 官方自动去重 ─────────────────────────
+# ── 2. 第三方软件包导入 + 官方同名清理（第三方优先） ─────────────────────────
 SYNC_SH="$GITHUB_WORKSPACE/scripts/common/package-sync.sh"
 [ -f "$SYNC_SH" ] || SYNC_SH="$MYDIR/../common/package-sync.sh"
 

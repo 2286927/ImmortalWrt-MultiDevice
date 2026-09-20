@@ -1,9 +1,16 @@
 #!/bin/bash
 #==============================================================================
-# scripts/common/package-sync.sh  (v2.1)
+# scripts/common/package-sync.sh  (v2.2)
 #------------------------------------------------------------------------------
-# 从 kenzok8/small-package 导入白名单第三方软件包，并自动跳过官方已提供的
-# 同名包（ImmortalWrt 官方源码树 + 官方 feeds 优先），彻底解决：
+# 从 kenzok8/small-package 导入白名单第三方软件包。
+#
+# v2.2 策略反转（2026-09-20 指定，全设备生效）：
+#   第三方与官方重复时「第三方优先」——移除官方同名包（源码树 + feeds 源
+#   目录 + feeds 安装链接），导入第三方版本进入编译。
+#
+# v2.1 历史：官方已有的一律使用官方版本（跳过第三方导入）。
+#
+# 共同解决：
 #   1) 第三方与官方重复导致的"版本撕裂"
 #   2) 重复包名引发的编译冲突/告警
 #
@@ -23,7 +30,7 @@ set -u
 SMALL_REPO_URL="${SMALL_REPO_URL:-https://github.com/kenzok8/small-package.git}"
 SMALL_TMP_DIR="package/small-package-tmp"
 
-# 强制使用第三方版本的包（即使官方已有同名包），按需填写，默认为空
+# v2.2 起全局第三方优先，本清单仅为兼容保留（逻辑上已无实际作用）
 FORCE_THIRD_PARTY_PKGS=(
   # 例如: "luci-app-xxx"
 )
@@ -39,12 +46,31 @@ is_force_third_party() {
 # 是否为官方已提供的包
 is_official_pkg() {
   local pkg="$1"
-  # 基础源码树（顶层 + 分类目录，不含 package/feeds 软链）
+  # 基础源码树（顶层 + 分类目录）；必须排除第三方临时克隆目录
+  # small-package-tmp（v2.1 潜伏 bug：find 扫入该目录导致白名单包
+  # 被误判"官方已有"而从未导入）
   [ -e "package/$pkg" ] && return 0
-  find package -maxdepth 3 -type d -name "$pkg" -print -quit 2>/dev/null | grep -q . && return 0
+  find package -maxdepth 3 -type d -name "$pkg" -not -path "package/small-package-tmp*" -print -quit 2>/dev/null | grep -q . && return 0
   # 官方 feeds
   find feeds -maxdepth 3 -type d -name "$pkg" -print -quit 2>/dev/null | grep -q . && return 0
   return 1
+}
+
+# 移除官方同名包的全部落点（基础源码树 + feeds 源目录 + feeds 安装链接），
+# 确保构建树中该包名唯一，由第三方版本接管
+remove_official_pkg() {
+  local pkg="$1" p
+  local paths
+  paths=$(
+    { find package -maxdepth 3 \( -type d -o -type l \) -name "$pkg" -not -path "package/small-package-tmp*" 2>/dev/null
+      find feeds -maxdepth 3 -type d -name "$pkg" 2>/dev/null; } | sort -u
+  )
+  for p in $paths; do
+    # 符号链接用 -L 判断（-e 对断链为假）
+    [ -e "$p" ] || [ -L "$p" ] || continue
+    rm -rf "$p"
+    echo "  ↳ 移除官方同名：$p（改用第三方版本）"
+  done
 }
 
 # 在 small-package 中查找包目录（含嵌套，必须含 Makefile）
@@ -68,8 +94,8 @@ sync_small_packages() {
     echo "❌ small-package 克隆失败"; return 1;
   }
 
-  local imported=0 skipped=0 missing=0
-  local skipped_list=() missing_list=()
+  local imported=0 overridden=0 missing=0
+  local overridden_list=() missing_list=()
   local pkg dir
 
   while read -r line; do
@@ -78,11 +104,13 @@ sync_small_packages() {
     for pkg in $line; do
     [ -z "$pkg" ] && continue
     case "$pkg" in \#*|\-*|*\/*) continue ;; esac
+    # 包名字符集过滤：跳过中文注释段等非包名词（v2.1 逐词修复遗留脏日志）
+    [[ "$pkg" =~ ^[A-Za-z0-9+._-]+$ ]] || continue
 
-    # 1) 官方已提供 → 跳过（官方优先）
-    if ! is_force_third_party "$pkg" && is_official_pkg "$pkg"; then
-      skipped=$((skipped+1)); skipped_list+=("$pkg")
-      continue
+    # 1) 官方已有同名 → 清理官方落点（第三方优先，v2.2 反转）
+    if is_official_pkg "$pkg"; then
+      overridden=$((overridden+1)); overridden_list+=("$pkg")
+      remove_official_pkg "$pkg"
     fi
 
     # 2) small-package 中查找（含嵌套目录）
@@ -169,8 +197,8 @@ WHITELIST_EOF
   echo ""
   echo "===== 第三方包同步完成 ====="
   echo "  导入第三方包：$imported"
-  echo "  跳过（官方已提供，使用官方版本）：$skipped"
-  if [ "${#skipped_list[@]}" -gt 0 ]; then echo "    ${skipped_list[*]}"; fi
+  echo "  覆盖官方同名（使用第三方版本）：$overridden"
+  if [ "${#overridden_list[@]}" -gt 0 ]; then echo "    ${overridden_list[*]}"; fi
   echo "  缺失（small-package 无此包）：$missing"
   if [ "${#missing_list[@]}" -gt 0 ]; then echo "    ${missing_list[*]}"; fi
   echo "============================"
