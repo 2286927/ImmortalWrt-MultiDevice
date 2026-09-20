@@ -21,7 +21,7 @@
 以下功能按设备线配置取舍，具体以 `config/` 下对应配置文件为准：
 
 **网络与加速**
-- LuCI Web 管理后台（25.12 玩客云线为 nginx 后端，其余为 uhttpd）
+- LuCI Web 管理后台（全线 uhttpd + ucode 分发）
 - fw4 防火墙（nftables）、fullcone NAT、TurboACC 网络加速、UPnP
 - OpenClash（多数线内置；小内存设备线未含）
 
@@ -46,7 +46,7 @@
 2. **下载**：编译完成后到 Releases 下载对应资产：
    - `*-squashfs-*.bin` / `*-sysupgrade.bin`：标准刷机/升级包
    - `*-rootfs.tar.gz`：根文件系统包
-   - `*.burn.img.xz`（玩客云）：USB 双公头直刷包，附 `.sha` 校验文件
+   - `*.burn.img.xz`（玩客云）：USB 双公头直刷包
    - `onecloud-boot.tar.gz`（玩客云 25.12）：boot 分区内容，供在线升级脚本使用
    - `config.txt`：该次编译的完整配置快照
 3. **刷机**：标准设备在 Breed/原厂引导或系统内 sysupgrade 刷入；玩客云需使用直刷包配合双 USB 公头线刷。
@@ -68,7 +68,32 @@
 - 单网口为 WAN，客户端模式：从上级路由 DHCP 获取地址，Bypass 管理别名 192.168.1.2
 - 25.12 线 rootfs 固定 896M，不再首启自动扩容到整卡，剩余空间可自行分区利用
 - 直刷包的 boot 与 rootfs 为同一次构建配套生成，请勿混用不同批次资产的 boot/rootfs
-- 在线升级（不拆机）：使用仓库根目录 `onecloud-online-upgrade.sh`，脚本会自动校验包完整性与 boot/rootfs 内核配套性并备份原配置；仅适用于 25.12 线固件之间的升级
+#### 在线升级（25.12 线，不拆机）
+
+适用：正在运行本仓库 **25.12 玩客云固件**的设备（eMMC，`/dev/root=/dev/mmcblk1p2`）；支持跨内核小版本升级（如 6.12.71 → 6.12.108，脚本同步更新 boot + rootfs，全程不拆机不接电脑）。请使用 **2026-09-19 及以后**（版本号 ≥ `26.09.19_20.48.19`）的 Release，更早批次的固件存在已修复的 LuCI 配置问题。
+
+SSH 登录 root 后两步执行：
+
+```sh
+# 第一步：预检（只读不改机，全部 PASS 才继续）
+wget -qO /tmp/oc-upgrade.sh https://raw.githubusercontent.com/2286927/ImmortalWrt-MultiDevice/main/onecloud-online-upgrade.sh
+sh /tmp/oc-upgrade.sh --check
+
+# 第二步：正式升级（写入完成约 10 秒后自动重启）
+sh /tmp/oc-upgrade.sh --reboot
+```
+
+脚本自动从 **Releases 最新版**下载以下 2 个资产（在最近 30 条 Release 内取最新一个同时含这两件的版本，两包同源同批次配套）：
+
+| 脚本下载的资产 | 用途 |
+|---|---|
+| `immortalwrt-amlogic-meson8b-thunder-onecloud-rootfs.tar.gz` | 新 rootfs（含内核与模块），覆盖 p2；保留 /etc/config、rc.local、密码、密钥、证书、/opt、/root |
+| `onecloud-boot.tar.gz` | boot 分区内容（boot.scr / dtb / uImage），写入 p1；脚本校验包内 uImage 内核版本与新 rootfs kmod 一致，不配套则拒绝升级 |
+
+注意：
+- `--check` 出现任何 FAIL 均不要执行第二步，请到 Issues 反馈
+- 升级后 LuCI 地址从上级路由 DHCP 列表查看（Bypass 管理别名 192.168.1.2）
+- 线刷用户请整包刷同批次 `*.burn.img.xz`，勿混用不同批次的 boot / rootfs 资产
 
 ### 升级与其他
 
