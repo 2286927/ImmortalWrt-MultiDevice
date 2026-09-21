@@ -81,10 +81,10 @@ FETCH="curl -sfL --connect-timeout 20 --max-time 300"
 GH_MIRRORS=" https://ghproxy.net https://gh-proxy.com https://ghfast.top https://gh.llkk.cc https://github.moeyy.xyz"
 try_fetch(){ # $1=输出文件 $2=github原始URL
   _out="$1"; _url="$2"
-  for _m in "" $GH_MIRRORS; do
+  for _m in $GH_MIRRORS ""; do
     if [ -z "$_m" ]; then _u="$_url"; else _u="$_m/$_url"; fi
     log "下载尝试: $_u"
-    if curl -sfL --connect-timeout 10 --max-time 900 -o "$_out" "$_u" && [ -s "$_out" ]; then
+    if curl -sfL --connect-timeout 10 --max-time 900 --speed-time 30 --speed-limit 1024 -o "$_out" "$_u" && [ -s "$_out" ]; then
       return 0
     fi
     rm -f "$_out"
@@ -104,7 +104,7 @@ else
   if [ -z "$URL_ROOTFS" ]; then
     log "法1 未取到（匿名限流或网络），改用法2: releases/latest 302 重定向…"
     TAG=""
-    for _m in "" $GH_MIRRORS; do
+    for _m in $GH_MIRRORS ""; do
       if [ -z "$_m" ]; then _u="https://github.com/$REPO/releases/latest"; else _u="$_m/https://github.com/$REPO/releases/latest"; fi
       TAG=$(curl -sfIL --connect-timeout 10 "$_u" 2>/dev/null | sed -n 's|^[Ll]ocation:[ ]*[^ ]*/tag/||p' | tr -d '\r\n')
       [ -n "$TAG" ] && { log "TAG 探测成功（通道: ${_m:-直连}）"; break; }
