@@ -39,9 +39,30 @@ die(){ echo "[upgrade][FATAL] $*" >&2; exit 1; }
 
 # ---------------- 预检 ----------------
 [ "$(id -u)" = "0" ] || die "请以 root 运行"
+# r26 修正：根分区动态探测。写死 /dev/mmcblk1p2 在 root=/dev/root 或 PARTUUID
+# 场景下与 /proc/mounts 首列不匹配，FSTYPE 取空被误判为非 ext4（r21 实机 2026-09-21）。
+# 以 mountinfo 根挂载的设备号为权威，经 /sys/block 反查真实设备名；失败时退回写死值。
+ROOT_RESOLVED=""
+if [ -r /proc/self/mountinfo ]; then
+  ROOT_MAJMIN=$(awk '$5=="/"{print $3; exit}' /proc/self/mountinfo)
+  if [ -n "$ROOT_MAJMIN" ]; then
+    for b in /sys/block/*/*; do
+      [ -r "$b/dev" ] || continue
+      [ "$(cat "$b/dev")" = "$ROOT_MAJMIN" ] || continue
+      ROOT_RESOLVED="/dev/$(basename "$b")"
+      break
+    done
+  fi
+fi
+if [ -n "$ROOT_RESOLVED" ] && [ -b "$ROOT_RESOLVED" ]; then
+  ROOT_DEV="$ROOT_RESOLVED"
+  BOOT_DEV="${ROOT_RESOLVED%p[0-9]}p1"
+  log "根分区探测: $ROOT_DEV（boot: $BOOT_DEV）"
+fi
 [ -b "$BOOT_DEV" ] || die "未找到 boot 分区 $BOOT_DEV"
 [ -b "$ROOT_DEV" ] || die "未找到 rootfs 分区 $ROOT_DEV"
-FSTYPE=$(awk -v d="$ROOT_DEV" '$1==d{print $3}' /proc/mounts)
+FSTYPE=$(awk -v d="$ROOT_DEV" '$1==d{print $3; exit}' /proc/mounts)
+[ -n "$FSTYPE" ] || FSTYPE=$(awk '$2=="/"{print $3; exit}' /proc/mounts)
 echo "$FSTYPE" | grep -q ext4 || die "rootfs 文件系统=$FSTYPE，本脚本仅支持 ext4（squashfs 请线刷）"
 RW=$(awk -v d="$ROOT_DEV" '$1==d{print $4}' /proc/mounts)
 echo "$RW" | grep -qw rw || die "rootfs 当前只读，无法升级"
