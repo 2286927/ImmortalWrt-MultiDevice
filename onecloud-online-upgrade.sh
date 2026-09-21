@@ -64,8 +64,9 @@ fi
 FSTYPE=$(awk -v d="$ROOT_DEV" '$1==d{print $3; exit}' /proc/mounts)
 [ -n "$FSTYPE" ] || FSTYPE=$(awk '$2=="/"{print $3; exit}' /proc/mounts)
 echo "$FSTYPE" | grep -q ext4 || die "rootfs 文件系统=$FSTYPE，本脚本仅支持 ext4（squashfs 请线刷）"
-RW=$(awk -v d="$ROOT_DEV" '$1==d{print $4}' /proc/mounts)
-echo "$RW" | grep -qw rw || die "rootfs 当前只读，无法升级"
+RW=$(awk -v d="$ROOT_DEV" '$1==d{print $4; exit}' /proc/mounts)
+[ -n "$RW" ] || RW=$(awk '$2=="/"{print $4; exit}' /proc/mounts)
+echo "$RW" | grep -qw rw || die "rootfs 当前只读，无法升级（mount options: ${RW:-空}）"
 FREE_KB=$(df -k /opt 2>/dev/null | awk 'END{print $4}')
 [ -n "$FREE_KB" ] && [ "$FREE_KB" -lt 409600 ] && die "/opt 剩余空间不足 400MB（当前 ${FREE_KB}KB）"
 AVAIL_MB=$(free -m | awk '/^Mem/{print $7}')
