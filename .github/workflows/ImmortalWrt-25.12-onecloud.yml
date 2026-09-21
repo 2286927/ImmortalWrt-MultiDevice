@@ -169,6 +169,12 @@ jobs:
           cp $GITHUB_WORKSPACE/recipe/ax6/banner package/base-files/files/etc/banner
           bash $GITHUB_WORKSPACE/recipe/sh/lean2.sh
           bash $GITHUB_WORKSPACE/recipe/sh/new_remove.sh
+          # r25: dropbear 允许空密码登录（passwd -d 场景，user 需求）。dropbear 二进制
+          # 支持 -B（strings 实证 "Auth succeeded with blank password"），但 25.12 init
+          # 未暴露该开关；仅影响空密码账户，有密码账户行为不变。
+          sed -i 's|procd_set_param command "$PROG" -F -P "$pid_file"|procd_set_param command "$PROG" -F -P "$pid_file" -B|' \
+            package/network/services/dropbear/files/dropbear.init
+          grep -q -- '-B' package/network/services/dropbear/files/dropbear.init || { echo "::error::dropbear -B 注入失败"; exit 1; }
 
       - name: r24恢复rust feed（方案A：官方dufs源码编译依赖）
         working-directory: /workdir/openwrt
