@@ -170,6 +170,25 @@ jobs:
           bash $GITHUB_WORKSPACE/recipe/sh/lean2.sh
           bash $GITHUB_WORKSPACE/recipe/sh/new_remove.sh
 
+      - name: r24恢复rust feed（方案A：官方dufs源码编译依赖）
+        working-directory: /workdir/openwrt
+        run: |
+          # recipe remove.sh/new_remove.sh 会 rm -rf feeds/packages/lang/rust（瘦身），
+          # 官方 dufs Makefile include ../../lang/rust/rust-package.mk 随之断裂（r23 首败根因）。
+          # 恢复官方 openwrt/packages openwrt-25.12 分支的 lang/rust（host 工具链 + rust-package.mk）。
+          # r22 config.txt 实证 shadowsocks-rust/hysteria 等其余 rust 消费者全为 not set，dufs 是唯一受益者。
+          rm -rf feeds/packages/lang/rust
+          mkdir -p feeds/packages/lang
+          git clone -q --depth 1 --filter=blob:none --sparse -b openwrt-25.12 \
+            https://github.com/openwrt/packages /tmp/rp-feed
+          git -C /tmp/rp-feed sparse-checkout set lang/rust
+          cp -a /tmp/rp-feed/lang/rust feeds/packages/lang/
+          rm -rf /tmp/rp-feed
+          test -f feeds/packages/lang/rust/rust-package.mk || { echo "::error::rust-package.mk 恢复失败"; exit 1; }
+          test -f feeds/packages/lang/rust/Makefile || { echo "::error::rust host Makefile 恢复失败"; exit 1; }
+          echo "=== r24 rust feed 已恢复 ==="
+          ls feeds/packages/lang/rust/
+
       - name: 自定义IMAGS格式 - meson8b cortex-a5+vfpv4
         working-directory: /workdir/openwrt
         run: |
