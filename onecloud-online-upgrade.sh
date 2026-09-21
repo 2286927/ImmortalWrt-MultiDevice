@@ -76,6 +76,20 @@ log "当前运行内核: $CUR_KV（升级后将被替换，属正常跨版本升
 # ---------------- 下载（双通道探测） ----------------
 mkdir -p "$WORK"
 FETCH="curl -sfL --connect-timeout 20 --max-time 300"
+# r26b: GitHub 直连失败时自动轮询加速镜像（2026-09-21 实机：raw.githubusercontent.com 挂死）
+GH_MIRRORS=" https://ghproxy.net https://gh-proxy.com https://ghfast.top https://gh.llkk.cc https://github.moeyy.xyz"
+try_fetch(){ # $1=输出文件 $2=github原始URL
+  _out="$1"; _url="$2"
+  for _m in "" $GH_MIRRORS; do
+    if [ -z "$_m" ]; then _u="$_url"; else _u="$_m/$_url"; fi
+    log "下载尝试: $_u"
+    if curl -sfL --connect-timeout 10 --max-time 900 -o "$_out" "$_u" && [ -s "$_out" ]; then
+      return 0
+    fi
+    rm -f "$_out"
+  done
+  return 1
+}
 if [ -n "${MANUAL_URL:-}" ]; then
   URL_ROOTFS="$MANUAL_URL"
   URL_BOOT=$(echo "$MANUAL_URL" | sed "s|$ASSET_ROOTFS|$ASSET_BOOT|")
@@ -88,8 +102,12 @@ else
     sed -n "s/.*\"browser_download_url\"[ ]*:[ ]*\"\([^\"]*$ASSET_BOOT\)\".*/\1/p" | head -n1)
   if [ -z "$URL_ROOTFS" ]; then
     log "法1 未取到（匿名限流或网络），改用法2: releases/latest 302 重定向…"
-    TAG=$($FETCH -I "https://github.com/$REPO/releases/latest" 2>/dev/null | \
-      sed -n 's|^[Ll]ocation:[ ]*[^ ]*/tag/||p' | tr -d '\r\n')
+    TAG=""
+    for _m in "" $GH_MIRRORS; do
+      if [ -z "$_m" ]; then _u="https://github.com/$REPO/releases/latest"; else _u="$_m/https://github.com/$REPO/releases/latest"; fi
+      TAG=$(curl -sfIL --connect-timeout 10 "$_u" 2>/dev/null | sed -n 's|^[Ll]ocation:[ ]*[^ ]*/tag/||p' | tr -d '\r\n')
+      [ -n "$TAG" ] && { log "TAG 探测成功（通道: ${_m:-直连}）"; break; }
+    done
     [ -n "$TAG" ] || die "无法确定最新 Release TAG，请用 --url 手动指定"
     URL_ROOTFS="https://github.com/$REPO/releases/download/$TAG/$ASSET_ROOTFS"
     URL_BOOT="https://github.com/$REPO/releases/download/$TAG/$ASSET_BOOT"
@@ -97,9 +115,9 @@ else
   fi
 fi
 log "下载 rootfs 包: $URL_ROOTFS"
-$FETCH -o "$WORK/rootfs.tar.gz" "$URL_ROOTFS" || die "rootfs 包下载失败"
+try_fetch "$WORK/rootfs.tar.gz" "$URL_ROOTFS" || die "rootfs 包下载失败（直连+镜像均失败）"
 log "下载 boot 包: $URL_BOOT"
-$FETCH -o "$WORK/boot.tar.gz" "$URL_BOOT" || die "boot 包下载失败"
+try_fetch "$WORK/boot.tar.gz" "$URL_BOOT" || die "boot 包下载失败（直连+镜像均失败）"
 ls -lh "$WORK"
 
 # ---------------- 包校验 ----------------
