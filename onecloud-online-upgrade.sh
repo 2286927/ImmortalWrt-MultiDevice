@@ -115,9 +115,17 @@ else
   fi
 fi
 log "下载 rootfs 包: $URL_ROOTFS"
-try_fetch "$WORK/rootfs.tar.gz" "$URL_ROOTFS" || die "rootfs 包下载失败（直连+镜像均失败）"
+if [ -s "$WORK/rootfs.tar.gz" ] && tar -tzf "$WORK/rootfs.tar.gz" >/dev/null 2>&1; then
+  log "已存在通过校验的 rootfs 包，跳过下载（--check 复用）"
+else
+  try_fetch "$WORK/rootfs.tar.gz" "$URL_ROOTFS" || die "rootfs 包下载失败（直连+镜像均失败）"
+fi
 log "下载 boot 包: $URL_BOOT"
-try_fetch "$WORK/boot.tar.gz" "$URL_BOOT" || die "boot 包下载失败（直连+镜像均失败）"
+if [ -s "$WORK/boot.tar.gz" ] && tar -tzf "$WORK/boot.tar.gz" >/dev/null 2>&1; then
+  log "已存在通过校验的 boot 包，跳过下载（--check 复用）"
+else
+  try_fetch "$WORK/boot.tar.gz" "$URL_BOOT" || die "boot 包下载失败（直连+镜像均失败）"
+fi
 ls -lh "$WORK"
 
 # ---------------- 包校验 ----------------
