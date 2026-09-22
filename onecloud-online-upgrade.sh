@@ -1,12 +1,13 @@
 #!/bin/sh
 # ============================================================
-# OneCloud 在线升级脚本 v4（r13 固件起适用）
+# OneCloud 在线升级脚本 v5（r13 固件起适用）
 # 路径2 A模式：SSH 一条命令在线升级，全程不拆机不接电脑
 # 变更（对比 v2/v1）：
 #   1. rootfs + boot 双更新：r13 起内核随 rootfs 更新，boot 分区必须同步
 #      （rootfs.tar 不含内核；只换 rootfs 不换 boot → kmod 全部加载失败）
 #   2. 包内自洽性校验：boot 包内 uImage 内核版本必须等于 rootfs 包内
 #      /lib/modules 目录名（防止 boot/rootfs 资产不配套）
+#   5. v5（2026-09-22）：空间预检感知包复用——升级包已在位时门槛 400MB→150MB
 #   4. v4（2026-09-22）：法1 API 探测改直连+镜像轮询；法2 TAG 增加 onecloud
 #      资产存在性校验（防其他设备线 Release 占走 latest）与 TAG 字符集防御；
 #      --url 内部变量改名 OPT_URL，防 shell 环境残留误触发手动路径
@@ -70,8 +71,21 @@ echo "$FSTYPE" | grep -q ext4 || die "rootfs 文件系统=$FSTYPE，本脚本仅
 RW=$(awk -v d="$ROOT_DEV" '$1==d{print $4; exit}' /proc/mounts)
 [ -n "$RW" ] || RW=$(awk '$2=="/"{print $4; exit}' /proc/mounts)
 echo "$RW" | grep -qw rw || die "rootfs 当前只读，无法升级（mount options: ${RW:-空}）"
+# v5（2026-09-22 实机）: --check 下载的 155MB 包占位 /opt 后，--reboot 预检被自己的包挤死
+# （/opt 总可用 ~422MB，下载后剩 256MB < 400MB 误拒）。复用场景仅需备份(~35MB)+覆盖净增量，
+# 包已在位且完整时门槛放宽到 150MB。
+PKG_READY=0
+if [ -s "$WORK/rootfs.tar.gz" ] && tar -tzf "$WORK/rootfs.tar.gz" >/dev/null 2>&1 && \
+   [ -s "$WORK/boot.tar.gz" ] && tar -tzf "$WORK/boot.tar.gz" >/dev/null 2>&1; then
+  PKG_READY=1
+fi
 FREE_KB=$(df -k /opt 2>/dev/null | awk 'END{print $4}')
-[ -n "$FREE_KB" ] && [ "$FREE_KB" -lt 409600 ] && die "/opt 剩余空间不足 400MB（当前 ${FREE_KB}KB）"
+if [ "$PKG_READY" = "1" ]; then
+  log "升级包已在位且完整（复用模式，免重下 155MB）"
+  [ -n "$FREE_KB" ] && [ "$FREE_KB" -lt 153600 ] && die "/opt 剩余空间不足 150MB（当前 ${FREE_KB}KB），请清理 /opt 后重试"
+else
+  [ -n "$FREE_KB" ] && [ "$FREE_KB" -lt 409600 ] && die "/opt 剩余空间不足 400MB（当前 ${FREE_KB}KB）"
+fi
 AVAIL_MB=$(free -m | awk '/^Mem/{print $7}')
 [ -n "$AVAIL_MB" ] && [ "$AVAIL_MB" -lt 80 ] && die "可用内存不足 80MB（当前 ${AVAIL_MB}MB）"
 CUR_KV=$(uname -r)
