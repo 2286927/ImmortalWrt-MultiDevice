@@ -759,6 +759,12 @@ jobs:
         run: |
           set -e
 
+          echo "💾 磁盘状态（整理前）:"
+          df -h / || true
+          # 防护：编译后 toolchain build_dir 不再需要，释放空间防 step 初始化失败（磁盘满实证嫌疑）
+          sudo rm -rf openwrt/build_dir/toolchain-* 2>/dev/null || true
+          df -h /
+
           echo "📂 当前工作目录：$(pwd)"
           echo "📂 列出 openwrt/bin 目录："
           ls -al openwrt/bin || echo "❌ openwrt/bin 不存在"
