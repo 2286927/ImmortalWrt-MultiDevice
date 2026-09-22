@@ -82,6 +82,11 @@ on:
 
 permissions:
   contents: write
+
+# 自建 runner 单盘 145G：所有设备线共用排队组，串行编译防并发爆盘（y1 2026-09-22 实证 /dev/root 100%）
+concurrency:
+  group: openwrt-build
+  cancel-in-progress: false
   actions: write
 
 env:
@@ -227,6 +232,9 @@ jobs:
           sudo apt-get clean >/dev/null 2>&1 || true
           sudo apt-get autoremove -y >/dev/null 2>&1 || true
 
+          # 自建 runner：清理上次 run 的编译残留（workdir/openwrt 由克隆 step 自清，这里清 _temp 等大件）
+          sudo rm -rf /home/runner/work/*/workdir /home/runner/work/*/_temp /home/runner/work/*/_diag 2>/dev/null || true
+          df -h / || true
           # 清理大文件
           sudo rm -rf /usr/local/share/powershell >/dev/null 2>&1
           sudo rm -rf /usr/local/share/chromium >/dev/null 2>&1
@@ -564,7 +572,7 @@ jobs:
           echo "=== 启用原生 ccache 支持（CONFIG_CCACHE） ==="
           # 清理配置中可能残留的 ccache 项，统一由本步骤写入
           sed -i '/^CONFIG_CCACHE=/d;/^CONFIG_CCACHE_DIR=/d' .config
-          { echo 'CONFIG_CCACHE=y'; echo 'CONFIG_CCACHE_DIR="/home/runner/.cache/ccache"'; } >> .config
+          { echo 'CONFIG_CCACHE=y'; echo 'CONFIG_CCACHE_DIR="/home/runner/.cache/ccache"'; echo 'CONFIG_CCACHE_MAX_SIZE=5120'; } >> .config
 
           # 提升 ccache 容量上限（默认 5G，降低工具链与软件包对象互相淘汰的概率）
           mkdir -p ~/.config/ccache
