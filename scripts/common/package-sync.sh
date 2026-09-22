@@ -133,6 +133,7 @@ mihomo luci-app-passwall2 luci-app-ssr-plus luci-app-clash
 luci-app-clashoo luci-app-fchomo luci-app-nikki nikki
 luci-app-daede luci-app-mosdns trojan-go clashoo
 luci-app-netwizard
+luci-app-usb-printer
 # ---------- DNS 相关 ----------
 dns2socks-rust luci-app-dnsfilter luci-app-dnscrypt-proxy2 luci-app-dnsmasq-ipset
 luci-app-dnsproxy
