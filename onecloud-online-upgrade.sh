@@ -1,12 +1,15 @@
 #!/bin/sh
 # ============================================================
-# OneCloud 在线升级脚本 v3（r13 固件起适用）
+# OneCloud 在线升级脚本 v4（r13 固件起适用）
 # 路径2 A模式：SSH 一条命令在线升级，全程不拆机不接电脑
 # 变更（对比 v2/v1）：
 #   1. rootfs + boot 双更新：r13 起内核随 rootfs 更新，boot 分区必须同步
 #      （rootfs.tar 不含内核；只换 rootfs 不换 boot → kmod 全部加载失败）
 #   2. 包内自洽性校验：boot 包内 uImage 内核版本必须等于 rootfs 包内
 #      /lib/modules 目录名（防止 boot/rootfs 资产不配套）
+#   4. v4（2026-09-22）：法1 API 探测改直连+镜像轮询；法2 TAG 增加 onecloud
+#      资产存在性校验（防其他设备线 Release 占走 latest）与 TAG 字符集防御；
+#      --url 内部变量改名 OPT_URL，防 shell 环境残留误触发手动路径
 #   3. nginx 感知：r13 固件 LuCI 后端为 nginx；旧 uhttpd 配置修正仅在
 #      包内含 /etc/config/uhttpd 时执行，并清理 uhttpd 开机自启残留
 # 适用于运行 ImmortalWrt 的 OneCloud S805（eMMC，/dev/root=/dev/mmcblk1p2）
@@ -28,9 +31,9 @@ for a in "$@"; do
   case "$a" in
     --check) CHECK_ONLY="yes" ;;
     --reboot) REBOOT="yes" ;;
-    --url=*) MANUAL_URL="${a#--url=}" ;;
+    --url=*) OPT_URL="${a#--url=}" ;;
     --url) shift_next=1 ;;
-    *) if [ "${shift_next:-0}" = "1" ]; then MANUAL_URL="$a"; shift_next=0; fi ;;
+    *) if [ "${shift_next:-0}" = "1" ]; then OPT_URL="$a"; shift_next=0; fi ;;
   esac
 done
 
@@ -91,27 +94,44 @@ try_fetch(){ # $1=输出文件 $2=github原始URL
   done
   return 1
 }
-if [ -n "${MANUAL_URL:-}" ]; then
-  URL_ROOTFS="$MANUAL_URL"
-  URL_BOOT=$(echo "$MANUAL_URL" | sed "s|$ASSET_ROOTFS|$ASSET_BOOT|")
+if [ -n "${OPT_URL:-}" ]; then
+  URL_ROOTFS="$OPT_URL"
+  URL_BOOT=$(echo "$OPT_URL" | sed "s|$ASSET_ROOTFS|$ASSET_BOOT|")
   log "使用手动指定 URL"
 else
-  log "探测最新 Release 资产地址（法1: GitHub API）…"
-  URL_ROOTFS=$($FETCH "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null | \
-    sed -n "s/.*\"browser_download_url\"[ ]*:[ ]*\"\([^\"]*$ASSET_ROOTFS\)\".*/\1/p" | head -n1)
-  URL_BOOT=$($FETCH "https://api.github.com/repos/$REPO/releases?per_page=30" 2>/dev/null | \
-    sed -n "s/.*\"browser_download_url\"[ ]*:[ ]*\"\([^\"]*$ASSET_BOOT\)\".*/\1/p" | head -n1)
-  if [ -z "$URL_ROOTFS" ]; then
+  log "探测最新 Release 资产地址（法1: GitHub API，直连+镜像轮询）…"
+  for _m in $GH_MIRRORS ""; do
+    if [ -z "$_m" ]; then _u="https://api.github.com/repos/$REPO/releases?per_page=30"; else _u="$_m/https://api.github.com/repos/$REPO/releases?per_page=30"; fi
+    API_JSON=$(curl -sfL --connect-timeout 10 --max-time 60 "$_u" 2>/dev/null)
+    [ -n "$API_JSON" ] || continue
+    URL_ROOTFS=$(echo "$API_JSON" | sed -n "s/.*\"browser_download_url\"[ ]*:[ ]*\"\([^\"]*$ASSET_ROOTFS\)\".*/\1/p" | head -n1)
+    URL_BOOT=$(echo "$API_JSON" | sed -n "s/.*\"browser_download_url\"[ ]*:[ ]*\"\([^\"]*$ASSET_BOOT\)\".*/\1/p" | head -n1)
+    if [ -n "$URL_ROOTFS" ] && [ -n "$URL_BOOT" ]; then
+      log "API 探测成功（通道: ${_m:-直连}）"
+      break
+    fi
+  done
+  if [ -z "${URL_ROOTFS:-}" ]; then
     log "法1 未取到（匿名限流或网络），改用法2: releases/latest 302 重定向…"
     TAG=""
     for _m in $GH_MIRRORS ""; do
       if [ -z "$_m" ]; then _u="https://github.com/$REPO/releases/latest"; else _u="$_m/https://github.com/$REPO/releases/latest"; fi
-      TAG=$(curl -sfIL --connect-timeout 10 "$_u" 2>/dev/null | sed -n 's|^[Ll]ocation:[ ]*[^ ]*/tag/||p' | tr -d '\r\n')
+      TAG=$(curl -sfIL --connect-timeout 10 "$_u" 2>/dev/null | sed -n 's|^[Ll]ocation:[ ]*[^ ]*/tag/||p' | head -n1 | tr -d '\r\n')
       [ -n "$TAG" ] && { log "TAG 探测成功（通道: ${_m:-直连}）"; break; }
     done
     [ -n "$TAG" ] || die "无法确定最新 Release TAG，请用 --url 手动指定"
+    echo "$TAG" | grep -qE '^[A-Za-z0-9._-]+$' || die "TAG 异常（$TAG），请用 --url 手动指定"
     URL_ROOTFS="https://github.com/$REPO/releases/download/$TAG/$ASSET_ROOTFS"
     URL_BOOT="https://github.com/$REPO/releases/download/$TAG/$ASSET_BOOT"
+    # releases/latest 为全仓语义：其他设备线发包会占走 latest（2026-09-22 实机 r68s 占位实证），
+    # 必须验证该 TAG 下确实存在 onecloud 资产才可用
+    _ok=""
+    for _m in $GH_MIRRORS ""; do
+      if [ -z "$_m" ]; then _u="$URL_ROOTFS"; else _u="$_m/$URL_ROOTFS"; fi
+      if curl -sfIL --connect-timeout 10 --max-time 60 "$_u" >/dev/null 2>&1; then _ok="${_m:-直连}"; break; fi
+    done
+    [ -n "$_ok" ] || die "最新 Release($TAG) 不含 $ASSET_ROOTFS（latest 被其他设备线占用），请用 --url 手动指定 onecloud 资产地址"
+    log "资产存在性校验通过（通道: $_ok）"
     log "TAG=$TAG"
   fi
 fi
@@ -174,7 +194,6 @@ BOOT_NAME=$(dd if="$WORK/boot-extract/uImage" bs=1 skip=32 count=32 2>/dev/null 
 [ -n "$BOOT_NAME" ] || die "无法从 uImage 头部读取镜像名"
 log "rootfs kmod: $PKG_KV | boot 镜像名: $BOOT_NAME"
 echo "$BOOT_NAME" | grep -q "$PKG_KV" || die "boot 内核($BOOT_NAME) 与 rootfs kmod($PKG_KV) 不配套，拒绝升级"
-rm -rf "$WORK/boot-extract"
 rm -rf "$WORK/boot-extract"
 
 # ---------------- --check 出口（未做任何写盘操作） ----------------
