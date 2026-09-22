@@ -1,12 +1,14 @@
 #!/bin/sh
 # ============================================================
-# OneCloud 在线升级脚本 v5（r13 固件起适用）
+# OneCloud 在线升级脚本 v6（r13 固件起适用）
 # 路径2 A模式：SSH 一条命令在线升级，全程不拆机不接电脑
 # 变更（对比 v2/v1）：
 #   1. rootfs + boot 双更新：r13 起内核随 rootfs 更新，boot 分区必须同步
 #      （rootfs.tar 不含内核；只换 rootfs 不换 boot → kmod 全部加载失败）
 #   2. 包内自洽性校验：boot 包内 uImage 内核版本必须等于 rootfs 包内
 #      /lib/modules 目录名（防止 boot/rootfs 资产不配套）
+#   6. v6（2026-09-22）：复用模式来源一致性校验——本地包与目标 Release 不同源时
+#      自动清理重下（防旧版本包被误复用升到旧版）；来源标记 /opt/rfs-upgrade/.rootfs_url
 #   5. v5（2026-09-22）：空间预检感知包复用——升级包已在位时门槛 400MB→150MB
 #   4. v4（2026-09-22）：法1 API 探测改直连+镜像轮询；法2 TAG 增加 onecloud
 #      资产存在性校验（防其他设备线 Release 占走 latest）与 TAG 字符集防御；
@@ -150,10 +152,22 @@ else
   fi
 fi
 log "下载 rootfs 包: $URL_ROOTFS"
+_reuse_ok=0
 if [ -s "$WORK/rootfs.tar.gz" ] && tar -tzf "$WORK/rootfs.tar.gz" >/dev/null 2>&1; then
-  log "已存在通过校验的 rootfs 包，跳过下载（--check 复用）"
+  # v6: 来源一致性校验——本地包必须与本次目标 Release 同源，防止旧版本包被误复用升级
+  _saved=$(cat "$WORK/.rootfs_url" 2>/dev/null)
+  if [ "$_saved" = "$URL_ROOTFS" ]; then
+    _reuse_ok=1
+  else
+    log "本地包与目标版本不一致（旧: ${_saved:-无记录}），清理后重新下载"
+    rm -f "$WORK/rootfs.tar.gz" "$WORK/boot.tar.gz" "$WORK/.rootfs_url"
+  fi
+fi
+if [ "$_reuse_ok" = "1" ]; then
+  log "本地包与目标版本一致，跳过下载（复用模式）"
 else
   try_fetch "$WORK/rootfs.tar.gz" "$URL_ROOTFS" || die "rootfs 包下载失败（直连+镜像均失败）"
+  echo "$URL_ROOTFS" > "$WORK/.rootfs_url"
 fi
 log "下载 boot 包: $URL_BOOT"
 if [ -s "$WORK/boot.tar.gz" ] && tar -tzf "$WORK/boot.tar.gz" >/dev/null 2>&1; then
