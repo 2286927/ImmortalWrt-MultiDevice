@@ -82,12 +82,12 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 # 自建 runner 单盘 145G：所有设备线共用排队组，串行编译防并发爆盘（y1 2026-09-22 实证 /dev/root 100%）
 concurrency:
   group: openwrt-build
   cancel-in-progress: false
-  actions: write
 
 env:
   DEVICE_MODEL: ${{ github.event.inputs.device_model || 'newifi-y1' }}
