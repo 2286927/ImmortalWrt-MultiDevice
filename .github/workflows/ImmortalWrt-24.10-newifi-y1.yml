@@ -84,6 +84,11 @@ permissions:
   contents: write
   actions: write
 
+# 自建 runner 单盘 145G：所有设备线共用排队组，串行编译防并发爆盘
+concurrency:
+  group: openwrt-build
+  cancel-in-progress: false
+
 env:
   DEVICE_MODEL: ${{ github.event.inputs.device_model || 'newifi-y1' }}
   REPO_URL: ${{ github.event.inputs.repo_url || 'https://github.com/immortalwrt/immortalwrt' }}
@@ -102,7 +107,7 @@ env:
   CHECKED_COMMIT_MSGS_FILE: ''
   ENABLE_KEEPALIVED: ${{ github.event.inputs.enable_keepalived || 'true' }}
   ENABLE_DOCKER: ${{ github.event.inputs.enable_docker || 'false' }}
-  ENABLE_OPENCLASH: ${{ github.event.inputs.enable_openclash || 'true' }}
+  ENABLE_OPENCLASH: ${{ github.event.inputs.enable_openclash || 'false' }}
   ENABLE_WECHATPUSH: ${{ github.event.inputs.enable_wechatpush || 'false' }}
   UPLOAD_ALL_FILES: ${{ github.event.inputs.upload_all_files || 'false' }}
   LAN_IP: '172.16.7.1'
