@@ -879,7 +879,7 @@ jobs:
           [ -s "$CHECKED_COMMIT_MSGS_FILE" ] && echo ">>> 源仓库存在更新"
 
           # 生成标签
-          TAG="ImmortalWrt-$DEVICE_MODEL-25.12-${{ env.FIRMWARE_VERSION }}"
+          TAG="$DEVICE_MODEL-ImmortalWrt-25.12-${{ env.FIRMWARE_VERSION }}"
           echo "RELEASE_TAG=$TAG-$(date +%Y%m%d%H%M%S)" | tee -a $GITHUB_OUTPUT >> $GITHUB_ENV
 
           # 生成发布说明
@@ -1049,7 +1049,7 @@ jobs:
 
           # 获取符合当前型号的所有 Release 列表
           # 修正了过滤正则表达式，直接引用 $DEVICE_MODEL
-          RELEASES=$(gh release list --limit 100 --json name --jq ".[] | select(.name | test(\"ImmortalWrt-${DEVICE_MODEL}-25.12\")) | .name")
+          RELEASES=$(gh release list --limit 100 --json name --jq ".[] | select(.name | test(\"${DEVICE_MODEL}-ImmortalWrt-25.12\")) | .name")
 
           if [ -n "$RELEASES" ]; then
             for RELEASE in $RELEASES; do
