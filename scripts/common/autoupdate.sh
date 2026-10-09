@@ -156,12 +156,22 @@ do_apply() {
         exit 0
     fi
 
-    fw="/tmp/$prefix-sysupgrade.itb"
+    # 兼容 .itb / .bin：部分小内存设备（如 newifi Y1 21.02 线）发布的是 .bin 资产
+    fw=""
+    for ext in itb bin; do
+        if fetch "$base/$prefix-sysupgrade.$ext" "/tmp/$prefix-sysupgrade.$ext" 900; then
+            fw="/tmp/$prefix-sysupgrade.$ext"
+            break
+        fi
+    done
+    if [ -z "$fw" ]; then
+        log "固件下载失败（$prefix-sysupgrade.itb/.bin 均失败）"
+        exit 1
+    fi
     shasum="$fw.sha256"
 
     log "下载新固件 build#$remote ..."
-    fetch "$base/$prefix-sysupgrade.itb" "$fw" 900 || { log "固件下载失败"; exit 1; }
-    fetch "$base/$prefix-sysupgrade.itb.sha256" "$shasum" 30 || { log "校验文件下载失败"; rm -f "$fw"; exit 1; }
+    fetch "$base/$prefix-sysupgrade.${fw##*.}.sha256" "$shasum" 30 || { log "校验文件下载失败"; rm -f "$fw"; exit 1; }
 
     need=$(du -k "$fw" 2>/dev/null | awk '{print $1}')
     avail=$(df -k /tmp 2>/dev/null | awk 'NR==2{print $4}')
@@ -170,7 +180,7 @@ do_apply() {
         exit 1
     fi
 
-    if ( cd /tmp && sha256sum -c "$prefix-sysupgrade.itb.sha256" >/dev/null 2>&1 ); then
+    if ( cd /tmp && sha256sum -c "${fw##*/}.sha256" >/dev/null 2>&1 ); then
         log "sha256 校验通过，开始刷写（保留配置），设备将自动重启..."
         rm -f "$PENDING_FILE"
         sleep 2
