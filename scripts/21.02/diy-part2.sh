@@ -123,9 +123,20 @@ PRINTEOF
 
 chmod +x files/usr/bin/y1-scan-mode files/usr/bin/y1-print-mode
 
+# 3e. 短命令：scan-mode / print-mode（等价于 y1-scan-mode / y1-print-mode）
+cat > files/usr/bin/scan-mode <<'SHORTEOF'
+#!/bin/sh
+exec /usr/bin/y1-scan-mode
+SHORTEOF
+cat > files/usr/bin/print-mode <<'SHORTEOF'
+#!/bin/sh
+exec /usr/bin/y1-print-mode
+SHORTEOF
+chmod +x files/usr/bin/scan-mode files/usr/bin/print-mode
+
 # 3c. rc.local：默认打印模式——只起 usbipd 监听，不 bind（避免开机抢占打印机）
 cat > files/etc/rc.local <<'RCEOF'
-# 默认打印共享模式：p910nd(9100) 全共享；要扫描时 SSH 执行 y1-scan-mode
+# 默认打印共享模式：p910nd(9100) 全共享；要扫描时 SSH 执行 scan-mode
 sleep 3
 /etc/init.d/p910nd start 2>/dev/null || true
 /usr/sbin/usbipd -D &

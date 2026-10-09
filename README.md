@@ -100,19 +100,21 @@ sh /tmp/oc-upgrade.sh --reboot
 21.02 固件内置 **打印共享 + 按需扫描** 双模式机制（适配 M7605D 等多功能打印机）：
 
 - **打印模式（默认）**：p910nd 在 `9100` 端口全共享，局域网内任意电脑走 TCP/IP 9100 直接打印
-- **扫描模式**：SSH 执行 `y1-scan-mode`，打印机通过 USB/IP 导出，谁要扫描谁 `usbip.exe attach`，扫完 `detach` 后执行 `y1-print-mode` 恢复打印
+- **扫描模式**：SSH 执行 `scan-mode`，打印机通过 USB/IP 导出，谁要扫描谁 `usbip.exe attach`，扫完 `detach` 后执行 `print-mode` 恢复打印
 
 **路由器端（SSH root）：**
 
 ```sh
-y1-scan-mode    # 切到扫描模式（停 p910nd → usbipd → 自动绑定 M7605D）
-y1-print-mode   # 切回打印共享模式（解除导出 → 恢复 9100）
+scan-mode    # 切到扫描模式（停 p910nd → usbipd → 自动绑定 M7605D）
+print-mode   # 切回打印共享模式（解除导出 → 恢复 9100）
 ```
+
+（旧名 `y1-scan-mode` / `y1-print-mode` 仍保留可用，与新短命令等价）
 
 **Windows 端：**
 
 1. 所有电脑添加打印机：`添加打印机 → 手动 → TCP/IP 端口`，IP 填路由器地址、端口 `9100`，驱动选 M7605D —— 可同时打印
-2. 需要扫描的电脑（管理员 CMD，配合路由器 `y1-scan-mode`）：
+2. 需要扫描的电脑（管理员 CMD，配合路由器 `scan-mode`）：
 
 ```cmd
 usbip.exe list -r <路由器IP>            :: 应看到 M7605D (17ef:561c)
@@ -125,8 +127,8 @@ usbip.exe detach -p 1
 
 - 两种模式**互斥**：同一时刻打印机只能被一种机制占用（p910nd 需设备挂 usblp，usbip 需挂 usbip-host）
 - USB/IP 为**单客户端独占**：扫描时多台电脑需轮流 attach/detach
-- 切回打印前必须先让 Windows `usbip.exe detach`，再执行 `y1-print-mode`
-- 开机默认打印模式，不 bind 导出；M7605D 未插时 `y1-scan-mode` 会提示找不到设备
+- 切回打印前必须先让 Windows `usbip.exe detach`，再执行 `print-mode`
+- 开机默认打印模式，不 bind 导出；M7605D 未插时 `scan-mode` 会提示找不到设备
 
 ### Newifi Y1（21.02 线）值守式升级
 
