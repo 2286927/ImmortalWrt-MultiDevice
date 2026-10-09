@@ -90,6 +90,50 @@ SINGLE_FW_EOF
     echo ">>> 单网口定制完成（lan 已移除，wan/wan6 归 lan 域）"
 fi
 
+# ── 1d. CM520-79F 无线修复（注入默认 wireless 配置） ────────────
+# 背景：ipq40xx(IPQ4019) 无板载 tsens（上游 DTS 无节点/官方 config 关闭），
+#   LuCI 温度依赖 ath10k 芯片温度（CONFIG_ATH10K_THERMAL 默认 y）。
+#   此前 config 只装 ath10k-firmware-qca4019-ct、缺 ath10k-board-qca4019(board-2.bin)
+#   → ath10k 无法 probe → 无线设备未激活 + 无 thermal zone → LuCI "No temperature info"
+# 此段：仅 CM520 生效（其他线零影响）；注入 radio0(2.4G)+radio1(5G) 默认开放 SSID
+#   （wifi0=a000000=2.4G，wifi1=a800000=5G，IPQ4019 标准布局）
+if [[ "${DEVICE_MODEL:-}" == "cm520" ]]; then
+    echo ">>> CM520-79F 无线修复：注入默认 wireless 配置"
+    mkdir -p files/etc/config
+    if [ ! -f files/etc/config/wireless ]; then
+        cat > files/etc/config/wireless <<'CM520_WIFI_EOF'
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option channel 'auto'
+	option band '2g'
+	option cell_density '0'
+
+config wifi-device 'radio1'
+	option type 'mac80211'
+	option channel 'auto'
+	option band '5g'
+	option cell_density '0'
+
+config wifi-iface 'default_radio0'
+	option device 'radio0'
+	option network 'lan'
+	option mode 'ap'
+	option ssid 'ImmortalWrt'
+	option encryption 'none'
+
+config wifi-iface 'default_radio1'
+	option device 'radio1'
+	option network 'lan'
+	option mode 'ap'
+	option ssid 'ImmortalWrt'
+	option encryption 'none'
+CM520_WIFI_EOF
+        echo ">>> CM520 默认无线配置已写入 files/etc/config/wireless（SSID=ImmortalWrt 开放，请在 LuCI 设置密码）"
+    else
+        echo ">>> files/etc/config/wireless 已存在，跳过覆盖"
+    fi
+fi
+
 # ── 2. 第三方软件包导入 + 官方同名清理（第三方优先） ─────────────────────────
 SYNC_SH="$GITHUB_WORKSPACE/scripts/common/package-sync.sh"
 [ -f "$SYNC_SH" ] || SYNC_SH="$MYDIR/../common/package-sync.sh"
