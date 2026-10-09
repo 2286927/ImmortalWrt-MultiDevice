@@ -1,6 +1,6 @@
 # ImmortalWrt-MultiDevice
 
-基于 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) 的多设备固件云编译仓库，通过 GitHub Actions 自动编译，共 **9 款设备 × 2 个版本（24.10 / 25.12）= 18 条编译线**，产物自动发布到 Releases。
+基于 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) 的多设备固件云编译仓库，通过 GitHub Actions 自动编译，共 **9 款设备 × 2 个版本（24.10 / 25.12）+ Newifi Y1 21.02 专用线 = 19 条编译线**，产物自动发布到 Releases。
 
 ## 支持设备
 
@@ -10,7 +10,7 @@
 | 极路由 HC5962 | MediaTek MT7621 | 24.10 / 25.12 | |
 | 联想 Newifi D1 | MediaTek MT7621 | 24.10 / 25.12 | |
 | 联想 Newifi D2 | MediaTek MT7621 | 24.10 / 25.12 | |
-| 联想 Newifi Y1 | MediaTek MT7620 | 24.10 / 25.12 | 小内存设备 |
+| 联想 Newifi Y1 | MediaTek MT7620 | 21.02 / 24.10 / 25.12 | 小内存设备；21.02 线含 USB 打印/扫描双模式 |
 | OCTOPUS | AMLogic S912（ARMv8） | 24.10 / 25.12 | 单网口定制 |
 | 玩客云 OneCloud | AMLogic S805 | 24.10 / 25.12 | 单网口客户端模式，eMMC |
 | R68S | Rockchip RK3568 | 24.10 / 25.12 | 双千兆 |
@@ -94,6 +94,66 @@ sh /tmp/oc-upgrade.sh --reboot
 - `--check` 出现任何 FAIL 均不要执行第二步，请到 Issues 反馈
 - 升级后 LuCI 地址从上级路由 DHCP 列表查看（Bypass 管理别名 192.168.1.2）
 - 线刷用户请整包刷同批次 `*.burn.img.xz`，勿混用不同批次的 boot / rootfs 资产
+
+### Newifi Y1（21.02 线）USB 打印/扫描模式切换
+
+21.02 固件内置 **打印共享 + 按需扫描** 双模式机制（适配 M7605D 等多功能打印机）：
+
+- **打印模式（默认）**：p910nd 在 `9100` 端口全共享，局域网内任意电脑走 TCP/IP 9100 直接打印
+- **扫描模式**：SSH 执行 `y1-scan-mode`，打印机通过 USB/IP 导出，谁要扫描谁 `usbip.exe attach`，扫完 `detach` 后执行 `y1-print-mode` 恢复打印
+
+**路由器端（SSH root）：**
+
+```sh
+y1-scan-mode    # 切到扫描模式（停 p910nd → usbipd → 自动绑定 M7605D）
+y1-print-mode   # 切回打印共享模式（解除导出 → 恢复 9100）
+```
+
+**Windows 端：**
+
+1. 所有电脑添加打印机：`添加打印机 → 手动 → TCP/IP 端口`，IP 填路由器地址、端口 `9100`，驱动选 M7605D —— 可同时打印
+2. 需要扫描的电脑（管理员 CMD，配合路由器 `y1-scan-mode`）：
+
+```cmd
+usbip.exe list -r <路由器IP>            :: 应看到 M7605D (17ef:561c)
+usbip.exe attach -r <路由器IP> -b 1-1   :: 连接（busid 以 list 输出为准）
+:: 扫描完成后：
+usbip.exe detach -p 1
+```
+
+注意事项：
+
+- 两种模式**互斥**：同一时刻打印机只能被一种机制占用（p910nd 需设备挂 usblp，usbip 需挂 usbip-host）
+- USB/IP 为**单客户端独占**：扫描时多台电脑需轮流 attach/detach
+- 切回打印前必须先让 Windows `usbip.exe detach`，再执行 `y1-print-mode`
+- 开机默认打印模式，不 bind 导出；M7605D 未插时 `y1-scan-mode` 会提示找不到设备
+
+### Newifi Y1（21.02 线）值守式升级
+
+21.02 固件内置 `rax-autoupdate` 值守升级：每天 **04:40 自动检查** Releases 新版本并提示（/etc/crontabs/root 已写入），支持手动立即检查与一键应用。
+
+**SSH root 常用命令：**
+
+```sh
+rax-autoupdate status      # 查看当前版本、上次检查与 pending 状态
+rax-autoupdate check now   # 立即检查更新（发现新版本写入 /tmp/autoupdate.pending）
+rax-autoupdate apply       # 应用已检测到的新版本（sysupgrade 保留配置，自动重启）
+rax-autoupdate enable      # 开启每日自动检查（默认开启）
+rax-autoupdate disable     # 关闭每日自动检查
+```
+
+**配置 `/etc/config/autoupdate`：**
+
+| 选项 | 默认值 | 说明 |
+|---|---|---|
+| `enabled` | `1` | 值守总开关 |
+| `base_url` | 本仓库 Releases/latest/download | 固件下载基址 |
+| `prefix` | `autoupdate-NEWIFI-Y1-21.02` | 资产名前缀（匹配 sysupgrade 包） |
+| `auto_apply` | `0` | `1` 时检测到新版自动升级，`0` 仅提示待手动 apply |
+| `notify_url` | 空 | 升级通知回调 URL（可留空） |
+| `mirror` | `auto` | 多镜像自动降级（加速/防 GitHub 抽风） |
+
+升级采用 `sysupgrade` 保留配置，`check now` 后看到 pending 即可 `apply`，全程不拆机。
 
 ### 升级与其他
 
