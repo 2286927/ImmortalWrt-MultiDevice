@@ -132,16 +132,16 @@ usbip.exe detach -p 1
 
 ### Newifi Y1（21.02 线）值守式升级
 
-21.02 固件内置 `rax-autoupdate` 值守升级：每天 **04:40 自动检查** Releases 新版本并提示（/etc/crontabs/root 已写入），支持手动立即检查与一键应用。
+21.02 固件内置 `autoupdate` 值守升级：每天 **04:40 自动检查** Releases 新版本并提示（/etc/crontabs/root 已写入），支持手动立即检查与一键应用。
 
 **SSH root 常用命令：**
 
 ```sh
-rax-autoupdate status      # 查看当前版本、上次检查与 pending 状态
-rax-autoupdate check now   # 立即检查更新（发现新版本写入 /tmp/autoupdate.pending）
-rax-autoupdate apply       # 应用已检测到的新版本（sysupgrade 保留配置，自动重启）
-rax-autoupdate enable      # 开启每日自动检查（默认开启）
-rax-autoupdate disable     # 关闭每日自动检查
+autoupdate status      # 查看当前版本、上次检查与 pending 状态
+autoupdate check now   # 立即检查更新（发现新版本写入 /tmp/autoupdate.pending）
+autoupdate apply       # 应用已检测到的新版本（sysupgrade 保留配置，自动重启）
+autoupdate enable      # 开启每日自动检查（默认开启）
+autoupdate disable     # 关闭每日自动检查
 ```
 
 **配置 `/etc/config/autoupdate`：**

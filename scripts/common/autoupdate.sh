@@ -1,15 +1,15 @@
 #!/bin/sh
 # ============================================================
-# rax-autoupdate — CMCC RAX3000M 值守式固件检查/升级
+# autoupdate — CMCC RAX3000M 值守式固件检查/升级
 # 数据源：本仓库 GitHub Releases 固定资产 URL（releases/latest/download）
 # 依赖：curl（或 uclient-fetch + libustream）、sha256sum、sysupgrade
 # 用法：
-#   rax-autoupdate check        检查更新（cron 调用，含随机延迟）
-#   rax-autoupdate check now    立即检查（不延迟）
-#   rax-autoupdate apply        下载 + sha256 校验 + 刷写（保留配置，自动重启）
-#   rax-autoupdate status       查看状态与配置
-#   rax-autoupdate enable       启用每日自动检查
-#   rax-autoupdate disable      停用自动检查（手动 check/apply 仍可用）
+#   autoupdate check        检查更新（cron 调用，含随机延迟）
+#   autoupdate check now    立即检查（不延迟）
+#   autoupdate apply        下载 + sha256 校验 + 刷写（保留配置，自动重启）
+#   autoupdate status       查看状态与配置
+#   autoupdate enable       启用每日自动检查
+#   autoupdate disable      停用自动检查（手动 check/apply 仍可用）
 # 配置：/etc/config/autoupdate（notify_url 支持 ntfy/Bark 等 POST 文本接口）
 #   option mirror 'auto'  下载加速：auto=内置镜像列表自动降级（默认）
 #                         none=仅直连；其他值=自定义加速前缀（如 https://ghfast.top/），失败自动回退直连
@@ -19,9 +19,9 @@ UCI_CFG="/etc/config/autoupdate"
 LOCAL_BUILD_FILE="/etc/autoupdate.build"
 PENDING_FILE="/tmp/autoupdate.pending"
 VERSION_FILE="/tmp/autoupdate.version"
-LOCK_FILE="/tmp/rax-autoupdate.lock"
+LOCK_FILE="/tmp/autoupdate.lock"
 
-log() { logger -t rax-autoupdate "$*"; echo "rax-autoupdate: $*"; }
+log() { logger -t autoupdate "$*"; echo "autoupdate: $*"; }
 
 get_opt() {
     if command -v uci >/dev/null 2>&1; then
@@ -100,7 +100,7 @@ local_run_id() {
 
 do_check() {
     local base prefix remote local_run
-    [ "$(get_opt enabled)" = "1" ] || { log "自动检查已禁用（rax-autoupdate enable 可启用）"; exit 0; }
+    [ "$(get_opt enabled)" = "1" ] || { log "自动检查已禁用（autoupdate enable 可启用）"; exit 0; }
     base=$(get_opt base_url)
     prefix=$(get_opt prefix)
     if [ -z "$base" ] || [ -z "$prefix" ]; then
@@ -129,7 +129,7 @@ do_check() {
     if [ "$remote" -gt "$local_run" ] 2>/dev/null; then
         echo "$remote" > "$PENDING_FILE"
         local msg
-        msg="发现新固件 build#$remote（当前 build#$local_run）。SSH 执行 rax-autoupdate apply 开始升级"
+        msg="发现新固件 build#$remote（当前 build#$local_run）。SSH 执行 autoupdate apply 开始升级"
         log "$msg"
         notify "$msg"
         if [ "$(get_opt auto_apply)" = "1" ]; then
@@ -193,7 +193,7 @@ do_apply() {
 }
 
 do_status() {
-    echo "== rax-autoupdate 状态 =="
+    echo "== autoupdate 状态 =="
     echo "enabled:     $(get_opt enabled)"
     echo "base_url:    $(get_opt base_url)"
     echo "prefix:      $(get_opt prefix)"
@@ -202,12 +202,12 @@ do_status() {
     _m=$(get_opt mirror); echo "mirror:      ${_m:-auto}"
     echo "local build: $(local_run_id)"
     if [ -f "$PENDING_FILE" ]; then
-        echo "pending:     build#$(cat "$PENDING_FILE" 2>/dev/null)（可执行 rax-autoupdate apply）"
+        echo "pending:     build#$(cat "$PENDING_FILE" 2>/dev/null)（可执行 autoupdate apply）"
     else
         echo "pending:     无"
     fi
     echo "-- 最近日志 --"
-    logread 2>/dev/null | grep rax-autoupdate | tail -n 5 || echo "（无）"
+    logread 2>/dev/null | grep autoupdate | tail -n 5 || echo "（无）"
 }
 
 set_enabled() {

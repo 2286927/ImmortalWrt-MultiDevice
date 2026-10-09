@@ -55,7 +55,8 @@ AUTOUPTATE_SRC="$MYDIR/../common/autoupdate.sh"
 
 if [ -f "$AUTOUPTATE_SRC" ]; then
     mkdir -p files/usr/bin files/etc/crontabs files/etc/config
-    install -m 755 "$AUTOUPTATE_SRC" files/usr/bin/rax-autoupdate
+    install -m 755 "$AUTOUPTATE_SRC" files/usr/bin/autoupdate
+    ln -sf autoupdate files/usr/bin/rax-autoupdate
 
     GH_BASE="https://github.com/${GITHUB_REPOSITORY:-OWNER/REPO}/releases/latest/download"
 
@@ -71,8 +72,8 @@ EOF
 
     echo "${GITHUB_RUN_ID:-0}" > files/etc/autoupdate.build
 
-    if ! grep -q "rax-autoupdate" files/etc/crontabs/root 2>/dev/null; then
-        echo "40 4 * * * /usr/bin/rax-autoupdate check" >> files/etc/crontabs/root
+    if ! grep -q "autoupdate" files/etc/crontabs/root 2>/dev/null; then
+        echo "40 4 * * * /usr/bin/autoupdate check" >> files/etc/crontabs/root
     fi
 
     echo ">>> 值守升级注入完成: prefix=${AUTOUPDATE_PREFIX} run_id=$(cat files/etc/autoupdate.build 2>/dev/null)"
