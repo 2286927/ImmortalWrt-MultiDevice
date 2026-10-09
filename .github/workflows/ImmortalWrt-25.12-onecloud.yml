@@ -331,6 +331,9 @@ jobs:
           if [[ $REPO_URL == *"immortalwrt"* ]]; then
             gzip *.tar
           fi
+          # 明显区分：25.12 树同时产出 rootfs.tar.gz 与 targz-rootfs.tar.gz（同内容双命名），
+          # 在线升级脚本仅使用 rootfs.tar.gz；发布页只保留 rootfs.tar.gz，避免出现两个几乎一样的包
+          rm -f ./*targz-rootfs.tar.gz
 
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           ls -lh $PWD
