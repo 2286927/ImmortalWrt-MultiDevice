@@ -44,7 +44,7 @@ jobs:
       - name: 清理服务器空间(Ubuntu)
         uses: rmoyulong/free-disk-space@main
         with:
-          tool-cache: true
+          preinstalled-runtimes: true
           android: true
           dotnet: true
           haskell: true
