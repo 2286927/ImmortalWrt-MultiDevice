@@ -134,6 +134,19 @@ CM520_WIFI_EOF
     fi
 fi
 
+# ── 1e. Dropbear SSH 出厂默认配置固化（全设备） ────────────────
+# 需求：所有设备固件出厂即 LuCI"SSH 访问"默认态：启用实例、接口未指定
+#   （监听全部接口）、端口 22、密码验证开、允许 root 凭密码登录。
+# 直接出厂 files/etc/config/dropbear 显式固化（与 OpenWrt 默认一致，防未来偏离）。
+mkdir -p files/etc/config
+cat > files/etc/config/dropbear <<'DROPBEAR_EOF'
+config dropbear
+	option password_auth '1'
+	option root_password_auth '1'
+	option Port '22'
+DROPBEAR_EOF
+echo ">>> Dropbear 出厂配置已固化（22 端口/全接口/密码验证/root 密码登录）"
+
 # ── 2. 第三方软件包导入 + 官方同名清理（第三方优先） ─────────────────────────
 SYNC_SH="$GITHUB_WORKSPACE/scripts/common/package-sync.sh"
 [ -f "$SYNC_SH" ] || SYNC_SH="$MYDIR/../common/package-sync.sh"
