@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================
-# OneCloud 在线升级脚本 v6（r13 固件起适用）
+# OneCloud 在线升级脚本 v7（r13 固件起适用）
 # 路径2 A模式：SSH 一条命令在线升级，全程不拆机不接电脑
 # 变更（对比 v2/v1）：
 #   1. rootfs + boot 双更新：r13 起内核随 rootfs 更新，boot 分区必须同步
@@ -9,6 +9,8 @@
 #      /lib/modules 目录名（防止 boot/rootfs 资产不配套）
 #   6. v6（2026-09-22）：复用模式来源一致性校验——本地包与目标 Release 不同源时
 #      自动清理重下（防旧版本包被误复用升到旧版）；来源标记 /opt/rfs-upgrade/.rootfs_url
+#   7. v7（2026-10-10）：rootfs 容量预检——896M 固定分区下解包前校验 / 剩余空间 ≥200MB，
+#      防未来 rootfs 增长逼近分区上限时升级失败
 #   5. v5（2026-09-22）：空间预检感知包复用——升级包已在位时门槛 400MB→150MB
 #   4. v4（2026-09-22）：法1 API 探测改直连+镜像轮询；法2 TAG 增加 onecloud
 #      资产存在性校验（防其他设备线 Release 占走 latest）与 TAG 字符集防御；
@@ -254,6 +256,17 @@ sync
 umount "$BOOT_MNT"
 rmdir "$BOOT_MNT" 2>/dev/null
 log "boot 分区更新完成（uboot 本体未动，仅内核/initrd/引导文件）"
+
+# ---------------- rootfs 容量预检（v7：896M 固定分区防线） ----------------
+# r12 起 rootfs 固定 896M 不再首启扩容；升级为原地 tar 覆盖（保留集除外），
+# 需确保 / 分区剩余空间足够。实测 rootfs 解包约 388M、分区 896M 余量充足；
+# 此处防线防止未来 rootfs 增长逼近分区上限时在线升级静默失败。
+log "rootfs 容量预检…"
+RFS_MB=$(tar -tvzf "$TGZ" 2>/dev/null | awk '{s+=$3} END{print int(s/1048576)}')
+ROOT_FREE_MB=$(df -m / 2>/dev/null | awk 'NR==2{print $4}')
+log "新 rootfs 解包约 ${RFS_MB:-?}MB，/ 分区剩余 ${ROOT_FREE_MB:-?}MB"
+[ -n "$RFS_MB" ] && [ -n "$ROOT_FREE_MB" ] && [ "$ROOT_FREE_MB" -lt 200 ] && \
+  die "rootfs 分区剩余空间不足 200MB（当前 ${ROOT_FREE_MB}MB），请清理 /opt 或扩分区后重试"
 
 # ---------------- rootfs 覆盖（排除保留集） ----------------
 log "rootfs 覆盖开始（/etc/config、rc.local、shadow、密码、密钥、证书、/opt、/root 均保留）…"
