@@ -21,24 +21,24 @@
 
 以下功能按设备线配置取舍，具体以 `config/` 下对应配置文件为准：
 
-**网络与加速**
-- LuCI Web 管理后台（全线 uhttpd + ucode 分发）
-- fw4 防火墙（nftables）、fullcone NAT、TurboACC 网络加速、UPnP
-- OpenClash（多数线内置；小内存设备线未含）
+**全线内置（21 条线）**
+- LuCI Web 管理后台（uhttpd + ucode 分发）
+- fw4 防火墙（nftables）、ZeroTier、socat
+- CPU 调频（luci-app-cpufreq）
 
-**服务与应用**
-- Docker 容器（dockerman）——内存充裕的设备线
-- AdGuard Home、DDNS-Go、ZeroTier、socat
+**多数线内置**
+- fullcone NAT、UPnP、ttyd 网页终端、KMS（vlmcsd）——除 Y1 21.02 / 23.05 线
+- AdGuard Home、DDNS-Go——除 Y1 各线
+- OpenClash——24.10 全线 + 25.12 的 HC5962 / D1 / D2 / OCTOPUS / R68S / RAX3000M（Y1 各线及 25.12 的 CM520、BT-R320 未含）
+- TurboACC 网络加速——24.10 各线、玩客云 25.12
+- Docker 容器（dockerman，编译时可选开关）——R68S、玩客云 25.12
+
+**部分线内置**
+- WOL 网络唤醒（luci-app-wol）：BT-R320 线；中继桥 relayd：BT-R320、Newifi D1（25.12）线
 - 应用过滤（OAF）：RAX3000M、OCTOPUS 线
-- WOL 网络唤醒：BT-R320 线（luci-app-wol）；中继桥 relayd：BT-R320、Newifi D1（25.12）线
-
-**存储与下载**
-- 文件共享：Samba（ksmbd / samba4）、NFS、WebDAV、FTP、CIFS 挂载
-- 下载：Aria2、迅雷远程下载
-- 磁盘管理、硬盘休眠、USB 打印服务
-
-**系统工具**
-- ttyd 网页终端、CPU 调频、内存回收、KMS（vlmcsd）
+- USB 打印服务（p910nd）：Y1 21.02 / 23.05 线，21.02 线另含打印/扫描双模式切换
+- 文件共享 ksmbd（Samba 协议）：除 Y1 21.02 外各线；samba4 完整版：BT-R320、RAX3000M（25.12）线
+- 下载工具 Aria2、迅雷远程下载：玩客云 25.12 线
 
 > 25.12 线基于 ImmortalWrt 25.12 分支，软件包管理为 APK（不再使用 opkg）。
 
@@ -61,12 +61,14 @@
 
 | 设备 | 默认 LAN IP | 默认密码 |
 |---|---|---|
-| 多数设备 | 172.16.7.1 | password |
-| R68S | 172.16.1.1 | password |
-| 玩客云 OneCloud | 172.16.8.1 | password |
-| Globitel BT-R320 | 172.16.0.1 | password |
+| 多数设备 | 172.16.7.1 | 空（首次登录设置） |
+| R68S | 172.16.1.1 | 空（首次登录设置） |
+| Globitel BT-R320 | 172.16.0.1 | 空（首次登录设置） |
+| 玩客云 OneCloud | DHCP 动态获取 | 空（首次登录设置） |
 
-**首次登录后请立即修改密码**，并注意暴露公网的安全风险（如 IPv6 直达、DDNS 场景建议收紧入站规则）。
+> 玩客云为单网口客户端模式，LAN 地址从上级路由 DHCP 列表查看（Bypass 管理别名 192.168.1.2）。
+
+**首次登录后请立即设置并修改密码**，并注意暴露公网的安全风险（如 IPv6 直达、DDNS 场景建议收紧入站规则）。
 
 ### 玩客云 OneCloud 专用说明
 
@@ -136,9 +138,9 @@ usbip.exe detach -p 1
 - 切回打印前必须先让 Windows `usbip.exe detach`，再执行 `print-mode`
 - 开机默认打印模式，不 bind 导出；M7605D 未插时 `scan-mode` 会提示找不到设备
 
-### Newifi Y1（21.02 线）值守式升级
+### 值守式升级（autoupdate，除玩客云外 19 条线内置）
 
-21.02 固件内置 `autoupdate` 值守升级：每天 **04:40 自动检查** Releases 新版本并提示（/etc/crontabs/root 已写入），支持手动立即检查与一键应用。
+各线固件内置 `autoupdate` 值守升级：每天 **04:40 自动检查** Releases 新版本并提示（/etc/crontabs/root 已写入），支持手动立即检查与一键应用。各线资产名前缀不同（如 Y1 21.02 为 `autoupdate-NEWIFI-Y1-21.02`，BT-R320 25.12 为 `autoupdate-BT-R320-25.12`），命令一致。
 
 **SSH root 常用命令：**
 
@@ -156,7 +158,7 @@ autoupdate disable     # 关闭每日自动检查
 |---|---|---|
 | `enabled` | `1` | 值守总开关 |
 | `base_url` | 本仓库 Releases/latest/download | 固件下载基址 |
-| `prefix` | `autoupdate-NEWIFI-Y1-21.02` | 资产名前缀（匹配 sysupgrade 包） |
+| `prefix` | `autoupdate-NEWIFI-Y1-21.02` | 资产名前缀（各线不同，匹配各自 sysupgrade 包） |
 | `auto_apply` | `0` | `1` 时检测到新版自动升级，`0` 仅提示待手动 apply |
 | `notify_url` | 空 | 升级通知回调 URL（可留空） |
 | `mirror` | `auto` | 多镜像自动降级（加速/防 GitHub 抽风） |
