@@ -950,6 +950,23 @@ jobs:
           fi
           echo "Release 创建成功: $RELEASE_TAG"
 
+      - name: 深度清理磁盘（保证 Post 缓存保存可用空间）
+        if: steps.tag.outputs.status == 'success'
+        run: |
+          echo "=== 清理前磁盘 ==="
+          df -hT
+          cd openwrt
+          # target 编译产物（toolchain 缓存只需 build_dir/host，target-* 可安全删除）
+          du -sh build_dir 2>/dev/null || true
+          rm -rf build_dir/target-* build_dir/log
+          # 临时目录与编译日志
+          rm -rf tmp logs
+          # 已发布固件目录中的 packages 索引（Release 已包含所需文件）
+          rm -rf bin/targets/mediatek/filogic/packages
+          cd ..
+          echo "=== 清理后磁盘 ==="
+          df -hT
+
       - name: 保存本仓库哈希
         run: |
           echo "$(git rev-parse HEAD)" > last_build_sha.txt
