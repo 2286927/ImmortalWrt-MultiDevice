@@ -147,6 +147,45 @@ config dropbear
 DROPBEAR_EOF
 echo ">>> Dropbear 出厂配置已固化（22 端口/全接口/密码验证/root 密码登录）"
 
+# ── 1f. Globitel BT-R320 U-Boot 恢复链 DHCP 化（仅 BT-R320 生效） ─
+# 背景：官方 472 patch 的 defenv 恢复路径按 reset 走 TFTP client（固定
+#   ipaddr=192.168.1.1 / serverip=192.168.1.254，无 DHCP），且官方安装
+#   说明所称 "U-Boot web UI" 在实际构建中并不存在（无 webui 补丁/配置）。
+# 改造（追加 504 patch）：
+#   1) 所有网络恢复路径前置 dhcp：挂路由器自动获取 IP（避免与用户局域网
+#      冲突），直连无 DHCP 时失败回退默认 192.168.1.1
+#   2) 按 reset 进入 tftpsrv 接收模式（U-Boot 作 TFTP server 等待 PC 推送
+#      recovery.itb，收完自动引导，PC 端无需静态 IP、无需跑 TFTP server）
+#   3) bootmenu 追加第 11 项手动触发；bootm 兜底指定 FIT 配置
+if [[ "${DEVICE_MODEL:-}" == "globitel-bt-r320" ]]; then
+    echo ">>> BT-R320 U-Boot 恢复链 DHCP 化：追加 504 patch"
+    cat > package/boot/uboot-mediatek/patches/504-globitel-bt-r320-dhcp-tftpsrv.patch <<'BT320_DHCP_EOF'
+diff --git a/defenvs/mt7981_globitel_bt-r320_env b/defenvs/mt7981_globitel_bt-r320_env
+index 8c95f81..ac1f59a 100644
+--- a/defenvs/mt7981_globitel_bt-r320_env
++++ b/defenvs/mt7981_globitel_bt-r320_env
+@@ -27,3 +27,4 @@
+ bootmenu_9=Reset all settings to factory defaults.=run reset_factory ; reset
+-boot_first=if button reset ; then run boot_tftp_recovery ; setenv flag_recover 1 ; run boot_default ; fi ; bootmenu
++bootmenu_10=Receive file via TFTP (PC push) and boot.=run boot_tftpsrv ; run bootmenu_confirm_return
++boot_first=if button reset ; then run boot_tftpsrv ; fi ; bootmenu
+ boot_default=if env exists flag_recover ; then else run bootcmd ; fi ; run boot_recovery ; setenv replacevol 1 ; run boot_tftp_forever
+@@ -33,7 +34,8 @@
+ boot_tftp_forever=while true ; do run boot_tftp_recovery ; sleep 1 ; done
+-boot_tftp_production=tftpboot $loadaddr $bootfile_upg && env exists replacevol && iminfo $loadaddr && run emmc_write_production ; if env exists noboot ; then else bootm $loadaddr#$bootconf ; fi
+-boot_tftp_recovery=tftpboot $loadaddr $bootfile && env exists replacevol && iminfo $loadaddr && run emmc_write_recovery ; if env exists noboot ; then else bootm $loadaddr#$bootconf ; fi
++boot_tftp_production=if dhcp ; then ; fi ; tftpboot $loadaddr $bootfile_upg && env exists replacevol && iminfo $loadaddr && run emmc_write_production ; if env exists noboot ; then else bootm $loadaddr#$bootconf ; fi
++boot_tftp_recovery=if dhcp ; then ; fi ; tftpboot $loadaddr $bootfile && env exists replacevol && iminfo $loadaddr && run emmc_write_recovery ; if env exists noboot ; then else bootm $loadaddr#$bootconf ; fi
+ boot_tftp_write_fip=tftpboot $loadaddr $bootfile_fip && run emmc_write_fip
+ boot_tftp_write_bl2=tftpboot $loadaddr $bootfile_bl2 && run emmc_write_bl2
+-boot_tftp=tftpboot $loadaddr $bootfile && bootm $loadaddr#$bootconf
++boot_tftp=if dhcp ; then ; fi ; tftpboot $loadaddr $bootfile && bootm $loadaddr#$bootconf
++boot_tftpsrv=if dhcp ; then ; fi ; tftpsrv $loadaddr ; bootm $loadaddr#$bootconf
+ mmc_write_vol=imszb $loadaddr image_size && test 0x$image_size -le 0x$part_size && mmc erase 0x$part_addr 0x$image_size && mmc write $loadaddr 0x$part_addr 0x$image_size
+BT320_DHCP_EOF
+    echo ">>> 504 patch 已写入（dhcp 前置 + tftpsrv 接收模式）"
+fi
+
 # ── 2. 第三方软件包导入 + 官方同名清理（第三方优先） ─────────────────────────
 SYNC_SH="$GITHUB_WORKSPACE/scripts/common/package-sync.sh"
 [ -f "$SYNC_SH" ] || SYNC_SH="$MYDIR/../common/package-sync.sh"
