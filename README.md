@@ -1,16 +1,17 @@
 # ImmortalWrt-MultiDevice
 
-基于 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) 的多设备固件云编译仓库，通过 GitHub Actions 自动编译，共 **9 款设备 × 2 个版本（24.10 / 25.12）+ Newifi Y1 21.02 专用线 = 19 条编译线**，产物自动发布到 Releases。
+基于 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) 的多设备固件云编译仓库，通过 GitHub Actions 自动编译，共 **10 款设备，21 条编译线**（9 款 × 24.10/25.12 双版本 + Newifi Y1 21.02/23.05 专用线 + Globitel BT-R320 25.12 专用线），产物自动发布到 Releases。
 
 ## 支持设备
 
 | 设备 | 平台 | 版本线 | 说明 |
 |---|---|---|---|
 | CM520-79F | Qualcomm IPQ40xx | 24.10 / 25.12 | |
+| Globitel BT-R320 | MediaTek MT7981（Filogic 820） | 25.12 | eMMC，2.5G 网口 |
 | 极路由 HC5962 | MediaTek MT7621 | 24.10 / 25.12 | |
 | 联想 Newifi D1 | MediaTek MT7621 | 24.10 / 25.12 | |
 | 联想 Newifi D2 | MediaTek MT7621 | 24.10 / 25.12 | |
-| 联想 Newifi Y1 | MediaTek MT7620 | 21.02 / 24.10 / 25.12 | 小内存设备；21.02 线含 USB 打印/扫描双模式 |
+| 联想 Newifi Y1 | MediaTek MT7620 | 21.02 / 23.05 / 24.10 / 25.12 | 小内存设备；21.02 线含 USB 打印/扫描双模式 |
 | OCTOPUS | AMLogic S912（ARMv8） | 24.10 / 25.12 | 单网口定制 |
 | 玩客云 OneCloud | AMLogic S805 | 24.10 / 25.12 | 单网口客户端模式，eMMC |
 | R68S | Rockchip RK3568 | 24.10 / 25.12 | 双千兆 |
@@ -29,6 +30,7 @@
 - Docker 容器（dockerman）——内存充裕的设备线
 - AdGuard Home、DDNS-Go、ZeroTier、socat
 - 应用过滤（OAF）：RAX3000M、OCTOPUS 线
+- WOL 网络唤醒：BT-R320 线（luci-app-wol）；中继桥 relayd：BT-R320、Newifi D1（25.12）线
 
 **存储与下载**
 - 文件共享：Samba（ksmbd / samba4）、NFS、WebDAV、FTP、CIFS 挂载
@@ -48,8 +50,10 @@
    - `*-rootfs.tar.gz`：根文件系统包
    - `*.burn.img.xz`（玩客云）：USB 双公头直刷包
    - `onecloud-boot.tar.gz`（玩客云 25.12）：boot 分区内容，供在线升级脚本使用
+   - `*-sysupgrade.itb`（BT-R320）：FIT 格式刷机/升级包；`globitel_bt-r320-recovery.itb` 为救援镜像
+   - `globitel_bt-r320-gpt.bin` / `globitel_bt-r320-bl31-uboot.fip` / `globitel_bt-r320-preloader.bin`（BT-R320）：底层引导文件，仅首刷与救援使用
    - `config.txt`：该次编译的完整配置快照
-3. **刷机**：标准设备在 Breed/原厂引导或系统内 sysupgrade 刷入；玩客云需使用直刷包配合双 USB 公头线刷。
+3. **刷机**：标准设备在 Breed/原厂引导或系统内 sysupgrade 刷入；玩客云需使用直刷包配合双 USB 公头线刷；BT-R320 首刷流程特殊——先在原厂系统内写入 GPT 分区表与 OpenWrt U-Boot，再经 U-Boot TFTP 推送恢复模式进入临时系统刷入正式固件（挂路由器全程无需给 PC 设静态 IP）。
 
 ## 使用注意
 
