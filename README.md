@@ -60,6 +60,7 @@
 | 多数设备 | 172.16.7.1 | password |
 | R68S | 172.16.1.1 | password |
 | 玩客云 OneCloud | 172.16.8.1 | password |
+| Globitel BT-R320 | 172.16.0.1 | password |
 
 **首次登录后请立即修改密码**，并注意暴露公网的安全风险（如 IPv6 直达、DDNS 场景建议收紧入站规则）。
 
