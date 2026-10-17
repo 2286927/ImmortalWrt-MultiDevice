@@ -269,14 +269,25 @@ jobs:
           # 创建提交文件
           TEMP_FILE="$GITHUB_WORKSPACE/build_commit_msgs.txt"
 
-          # 如果是首次构建，输出全部提交
-          if [ -z "$LAST_BUILD_SHA" ]; then
-            echo "首次构建，输出全部提交日志"
-            git log --pretty=format:"%s" | awk '!a[$0]++' | sed 's/^/- /' > "$TEMP_FILE"
-          else
-            # 输出从上次构建到现在的提交
-            git log $LAST_BUILD_SHA..HEAD --pretty=format:"%s" | awk '!a[$0]++' | sed 's/^/- /' > "$TEMP_FILE"
+          # 设备过滤：发布页只保留与本设备相关的提交（message 或改动文件命中设备标识，或标注"全设备"），不带入其他设备的更新
+          DEVICE_RE='(r68s|全设备)'
+          FILE_RE='r68s'
+          RANGE=""
+          if [ -n "$LAST_BUILD_SHA" ]; then
+            RANGE="$LAST_BUILD_SHA..HEAD"
           fi
+
+          git log --pretty=format:"%H|%s" $RANGE | awk '!seen[$0]++' > /tmp/all_commits.txt
+
+          > "$TEMP_FILE"
+          while IFS='|' read -r SHA MSG; do
+            [ -z "$SHA" ] && continue
+            if echo "$MSG" | grep -qiE "$DEVICE_RE"; then
+              echo "- $MSG" >> "$TEMP_FILE"
+            elif git show --name-only --pretty=format: "$SHA" | grep -qiE "$FILE_RE"; then
+              echo "- $MSG" >> "$TEMP_FILE"
+            fi
+          done < /tmp/all_commits.txt
 
           # 判断文件是否为空
           if [ ! -s "$TEMP_FILE" ]; then
@@ -436,9 +447,10 @@ jobs:
           if [ -z "$LAST_CHECKED_SHA" ]; then
             echo "首次运行，无历史更新记录"
           else
-            echo "输出从 $LAST_CHECKED_SHA 到 HEAD 的提交日志"
-            git log $LAST_CHECKED_SHA..HEAD --pretty=format:"%s" \
-              | awk '!a[$0]++' | sed 's/^/- /' > "$TEMP_FILE"
+            echo "输出从 $LAST_CHECKED_SHA 到 HEAD 的更新摘要（压缩为一句，不逐条列上游提交）"
+            N=$(git log $LAST_CHECKED_SHA..HEAD --oneline | wc -l)
+            SHORT_TO=$(git rev-parse --short HEAD)
+            echo "- 上游源码更新 ${N} 个提交（${LAST_CHECKED_SHA:0:7}..${SHORT_TO}），详见 [提交对比](${REPO_URL}/compare/${LAST_CHECKED_SHA:0:12}...${SHORT_TO})" > "$TEMP_FILE"
           fi
 
           # 判断文件是否为空
@@ -887,9 +899,9 @@ jobs:
             if [ -s "$BUILD_COMMIT_MSGS_FILE" ] || [ -s "$CHECKED_COMMIT_MSGS_FILE" ]; then
               echo -e "\n## 📝 更新内容"
 
-              # 本仓库输出
+              # 本仓库输出（已按设备过滤，仅本线相关变更）
               if [ -s "$BUILD_COMMIT_MSGS_FILE" ]; then
-                [ -s "$CHECKED_COMMIT_MSGS_FILE" ] && echo "### 📌 本仓库更新"
+                [ -s "$CHECKED_COMMIT_MSGS_FILE" ] && echo "### 📌 本线更新"
                 cat "$BUILD_COMMIT_MSGS_FILE"
               fi
 
