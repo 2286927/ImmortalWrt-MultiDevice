@@ -169,7 +169,7 @@ if [ -f "$AUTOUPTATE_SRC" ]; then
     install -m 755 "$AUTOUPTATE_SRC" files/usr/bin/autoupdate
     ln -sf autoupdate files/usr/bin/rax-autoupdate
 
-    GH_BASE="https://github.com/${GITHUB_REPOSITORY:-OWNER/REPO}/releases/latest/download"
+    GH_BASE="${AUTOUPDATE_BASE_URL:-https://github.com/${GITHUB_REPOSITORY:-OWNER/REPO}/releases/download/autoupdate}"  # 每线固定 tag 发布页，由 workflow env 注入
 
     cat > files/etc/config/autoupdate <<EOF
 config main 'main'
