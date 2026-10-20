@@ -176,7 +176,7 @@ autoupdate disable     # 关闭每日自动检查
 ## 📦 Globitel BT-R320 刷机资源包（离线自包含）
 
 BT-R320 专用离线刷机包：教程 + 全部刷机文件打包，无需到 Release 页逐个下载。
-**[下载 Globitel-BT-R320-flash-package.zip](Globitel-BT-R320-flash-package.zip)**（约 84 MB，含 Tftpd64 工具）
+**[下载 Globitel-BT-R320-flash-package.zip](Globitel-BT-R320-flash-package.zip)**（约 84 MB，含 Tftpd64 工具与 SSH 密钥三件套）
 
 包内清单（解压后顶层目录 `Globitel-BT-R320-flash-package/`）：
 
@@ -190,6 +190,7 @@ BT-R320 专用离线刷机包：教程 + 全部刷机文件打包，无需到 Re
 | `immortalwrt-mediatek-filogic-globitel_bt-r320-preloader.bin` | 底层 preloader（仅底层救援用，勿随意刷写） |
 | `sha256sums` | 文件校验清单 |
 | `tools/Tftpd64.zip` | TFTP 服务器工具（恢复模式必备，免费绿色软件解压即用） |
+| `ssh-keys/`（3 个文件） | SSH 免密登录密钥三件套：`id_rsa_3072-router.pub` 公钥追加到路由器 `/etc/dropbear/authorized_keys`，`id_rsa_3072-WinSCP.ppk` 导入 WinSCP、`id_rsa_3072-Xshell` 导入 Xshell |
 
 - 文件版本对应 Release tag `globitel-bt-r320-ImmortalWrt-25.12-r214e26e407-20261017132125`，与 Release 页单文件下载内容一致（已按对应构建名校验 SHA256）
 - 解压后打开教程按步骤操作即可；恢复模式为 U-Boot 从 PC（静态 192.168.1.254 + Tftpd64）**自动拉取**救援镜像，文件名不可改动
