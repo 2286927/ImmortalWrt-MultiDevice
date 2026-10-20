@@ -100,7 +100,7 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN  }}
   BUILD_COMMIT_MSGS_FILE: ''
   CHECKED_COMMIT_MSGS_FILE: ''
-  ENABLE_KEEPALIVED: ${{ github.event.inputs.enable_keepalived || 'true' }}
+  ENABLE_KEEPALIVED: ${{ github.event.inputs.enable_keepalived || 'false' }}
   ENABLE_DOCKER: ${{ github.event.inputs.enable_docker || 'false' }}
   ENABLE_OPENCLASH: ${{ github.event.inputs.enable_openclash || 'true' }}
   ENABLE_WECHATPUSH: ${{ github.event.inputs.enable_wechatpush || 'false' }}
