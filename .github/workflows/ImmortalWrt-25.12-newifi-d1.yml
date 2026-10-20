@@ -956,6 +956,7 @@ jobs:
           body_path: release
           files: |
             ${{ env.UPLOAD_ALL_FILES == 'true' && format('{0}/*', env.FIRMWARE) || format('{0}/*{{sysupgrade,initramfs}}*.*', env.FIRMWARE) }}
+            ${{ env.FIRMWARE }}/sha256sums
             ${{ env.FIRMWARE }}/autoupdate-*
 
       - name: 同步值守资产到固定 tag（autoupdate）
