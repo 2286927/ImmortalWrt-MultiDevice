@@ -170,3 +170,26 @@ autoupdate disable     # 关闭每日自动检查
 - 同大版本升级可用 sysupgrade 并保留配置；跨大版本（24.10 ↔ 25.12）建议不保留配置重新设置
 - 小内存设备（如 Newifi Y1）开 Docker 或 OpenClash 等重负载前请评估内存余量
 - 刷机有变砖风险，请先备份原厂固件，并确认固件与设备型号完全对应
+
+---
+
+## 📦 Globitel BT-R320 刷机资源包（离线自包含）
+
+BT-R320 专用离线刷机包：教程 + 全部刷机文件打包，无需到 Release 页逐个下载。
+**[下载 Globitel-BT-R320-flash-package.zip](Globitel-BT-R320-flash-package.zip)**（约 82 MB）
+
+包内清单（解压后顶层目录 `Globitel-BT-R320-flash-package/`）：
+
+| 文件 | 说明 |
+|---|---|
+| `BT-R320刷机教程.md` | 全流程教程：SSH 密钥配置 → 原厂备份 → 写入 GPT/U-Boot → U-Boot 恢复模式 TFTP → LuCI 落盘 → 进入系统 → 救砖恢复 |
+| `globitel-bt-r320_r214e26e407_202610171321_sysupgrade.itb` | 正式系统镜像（首刷落盘 + 后续升级） |
+| `globitel-bt-r320_r214e26e407_202610171321_initramfs-recovery.itb` | 救援镜像（U-Boot 恢复模式 TFTP 推送进内存系统） |
+| `immortalwrt-mediatek-filogic-globitel_bt-r320-gpt.bin` | GPT 分区表（首刷第 2 步写入） |
+| `immortalwrt-mediatek-filogic-globitel_bt-r320-bl31-uboot.fip` | OpenWrt U-Boot（首刷第 2 步写入，含 TFTP 恢复模式） |
+| `immortalwrt-mediatek-filogic-globitel_bt-r320-preloader.bin` | 底层 preloader（仅底层救援用，勿随意刷写） |
+| `sha256sums` | 文件校验清单 |
+
+- 文件版本对应 Release tag `globitel-bt-r320-ImmortalWrt-25.12-r214e26e407-20261017132125`，与 Release 页单文件下载内容一致（已按对应构建名校验 SHA256）
+- 解压后打开教程按步骤操作即可；TFTP 推送命令中可把救援镜像文件名替换为短名 `recovery.itb`
+- 后续新版本以 Release 页为准，本包为当前版本快照
