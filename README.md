@@ -53,7 +53,7 @@
    - `*-sysupgrade.itb`（BT-R320）：FIT 格式刷机/升级包；`globitel_bt-r320-recovery.itb` 为救援镜像
    - `globitel_bt-r320-gpt.bin` / `globitel_bt-r320-bl31-uboot.fip` / `globitel_bt-r320-preloader.bin`（BT-R320）：底层引导文件，仅首刷与救援使用
    - `config.txt`：该次编译的完整配置快照
-3. **刷机**：标准设备在 Breed/原厂引导或系统内 sysupgrade 刷入；玩客云需使用直刷包配合双 USB 公头线刷；BT-R320 首刷流程特殊——先在原厂系统内写入 GPT 分区表与 OpenWrt U-Boot，再经 U-Boot TFTP 推送恢复模式进入临时系统刷入正式固件（挂路由器全程无需给 PC 设静态 IP）。
+3. **刷机**：标准设备在 Breed/原厂引导或系统内 sysupgrade 刷入；玩客云需使用直刷包配合双 USB 公头线刷；BT-R320 首刷流程特殊——先在原厂系统内写入 GPT 分区表与 OpenWrt U-Boot，再经 U-Boot 恢复模式从 PC（静态 `192.168.1.254`，跑 TFTP 服务器如 Tftpd64）自动拉取救援镜像进入临时系统，刷入正式固件（详见包内教程第六节）。
 
 ## 使用注意
 
