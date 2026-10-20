@@ -208,7 +208,8 @@ if [ -f "$AUTOUPTATE_SRC" ]; then
     install -m 755 "$AUTOUPTATE_SRC" files/usr/bin/autoupdate
     ln -sf autoupdate files/usr/bin/rax-autoupdate
 
-    GH_BASE="https://github.com/${GITHUB_REPOSITORY:-OWNER/REPO}/releases/latest/download"
+    # 固定 tag autoupdate（多设备资产共存，发版后由 workflow 同步，URL 永不失效）
+    GH_BASE="https://github.com/${GITHUB_REPOSITORY:-OWNER/REPO}/releases/download/autoupdate"
 
     cat > files/etc/config/autoupdate <<EOF
 config main 'main'
