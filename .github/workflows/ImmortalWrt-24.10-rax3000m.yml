@@ -108,7 +108,6 @@ env:
   LAN_IP: '172.16.7.1'
   LAN_HOSTNAME: 'CMCC-RAX3000M'
   AUTOUPDATE_PREFIX: autoupdate-RAX3000M-24.10
-  AUTOUPDATE_BASE_URL: 'https://github.com/2286927/ImmortalWrt-MultiDevice/releases/download/cmcc_rax3000m-ImmortalWrt-24.10'
 
 jobs:
   check-source-updates:
@@ -882,8 +881,8 @@ jobs:
           [ -s "$CHECKED_COMMIT_MSGS_FILE" ] && echo ">>> 源仓库存在更新"
 
           # 生成标签
-          TAG="$DEVICE_MODEL-ImmortalWrt-24.10"  # 固定 tag：每线一个永久发布页，编译时覆盖更新
-          echo "RELEASE_TAG=$TAG" | tee -a $GITHUB_OUTPUT >> $GITHUB_ENV
+          TAG="$DEVICE_MODEL-ImmortalWrt-24.10-${{ env.FIRMWARE_VERSION }}"
+          echo "RELEASE_TAG=$TAG-$(date +%Y%m%d%H%M%S)" | tee -a $GITHUB_OUTPUT >> $GITHUB_ENV
 
           # 生成发布说明
           {
@@ -892,7 +891,7 @@ jobs:
             echo "设备型号: $DEVICE_MODEL"
             echo "编译时间: $(date +'%Y-%m-%d %H:%M %Z')"
             echo "后台地址: ${LAN_IP} 或 http://${LAN_HOSTNAME}.lan/"
-            echo "值守升级固定地址: https://github.com/${{ github.repository }}/releases/download/$TAG/${SYSUPGRADE_ASSET}"
+            echo "值守升级固定地址: https://github.com/${{ github.repository }}/releases/download/autoupdate/${SYSUPGRADE_ASSET}"
             echo "源代码仓库: $REPO_URL"
             echo "源仓库分支: $REPO_BRANCH"
             echo "源仓库提交: [查看编译时提交]($SOURCE_COMMIT_URL)"
@@ -944,13 +943,6 @@ jobs:
           echo "RELEASE_TAG: ${{ steps.tag.outputs.RELEASE_TAG }}"
           echo "RELEASE_TAG env: $RELEASE_TAG"
 
-      - name: 清理旧发布页（固定 tag 覆盖更新）
-        if: steps.tag.outputs.status == 'success'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete "${{ steps.tag.outputs.RELEASE_TAG }}" --repo ${{ github.repository }} --yes --cleanup-tag 2>/dev/null || true
-
       - name: 发布固件
         uses: softprops/action-gh-release@v3
         if: steps.tag.outputs.status == 'success'
@@ -958,12 +950,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.tag.outputs.RELEASE_TAG }}
-          name: "固件版本 ${{ env.FIRMWARE_VERSION }}"
           body_path: release
           files: |
             ${{ env.UPLOAD_ALL_FILES == 'true' && format('{0}/*', env.FIRMWARE) || format('{0}/*{{sysupgrade,initramfs}}*.*', env.FIRMWARE) }}
             ${{ env.FIRMWARE }}/sha256sums
             ${{ env.FIRMWARE }}/autoupdate-*
+
+      - name: 同步值守资产到固定 tag（autoupdate）
+        if: steps.tag.outputs.status == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view autoupdate --repo ${{ github.repository }} >/dev/null 2>&1 || \
+            gh release create autoupdate --repo ${{ github.repository }} --title "值守升级资产（固定地址，多设备共存）" --notes "各设备线 autoupdate-* 资产的固定下载地址（releases/download/autoupdate/），由各设备编译线发版后自动同步，勿删除本 Release。"
+          gh release upload autoupdate --repo ${{ github.repository }} --clobber ${{ env.FIRMWARE }}/autoupdate-*
+          echo "值守资产已同步到固定 tag autoupdate"
 
       - name: 验证Release创建
         run: |

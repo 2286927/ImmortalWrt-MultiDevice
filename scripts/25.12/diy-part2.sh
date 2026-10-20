@@ -209,7 +209,7 @@ if [ -f "$AUTOUPTATE_SRC" ]; then
     ln -sf autoupdate files/usr/bin/rax-autoupdate
 
     # 固定 tag autoupdate（多设备资产共存，发版后由 workflow 同步，URL 永不失效）
-    GH_BASE="${AUTOUPDATE_BASE_URL:-https://github.com/${GITHUB_REPOSITORY:-OWNER/REPO}/releases/download/autoupdate}"  # 每线固定 tag 发布页，由 workflow env 注入
+    GH_BASE="https://github.com/${GITHUB_REPOSITORY:-OWNER/REPO}/releases/download/autoupdate"
 
     cat > files/etc/config/autoupdate <<EOF
 config main 'main'
