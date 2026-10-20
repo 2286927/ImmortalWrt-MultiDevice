@@ -192,6 +192,8 @@ BT-R320 专用离线刷机包：教程 + 全部刷机文件打包，无需到 Re
 | `tools/Tftpd64.zip` | TFTP 服务器工具（恢复模式必备，免费绿色软件解压即用） |
 | `ssh-keys/`（3 个文件） | SSH 免密登录密钥三件套：`id_rsa_3072-router.pub` 公钥追加到路由器 `/etc/dropbear/authorized_keys`，`id_rsa_3072-WinSCP.ppk` 导入 WinSCP、`id_rsa_3072-Xshell` 导入 Xshell |
 
-- 文件版本对应 Release tag `globitel-bt-r320-ImmortalWrt-25.12-r214e26e407-20261017132125`，与 Release 页单文件下载内容一致（已按对应构建名校验 SHA256）
+- 文件版本对应固定发布页 [globitel-bt-r320-ImmortalWrt-25.12](https://github.com/2286927/ImmortalWrt-MultiDevice/releases/tag/globitel-bt-r320-ImmortalWrt-25.12)（每次编译覆盖更新此页，具体版本看页面标题），与 Release 页单文件下载内容一致（已按对应构建名校验 SHA256）
 - 解压后打开教程按步骤操作即可；恢复模式为 U-Boot 从 PC（静态 192.168.1.254 + Tftpd64）**自动拉取**救援镜像，文件名不可改动
+
+**原厂全分区备份（救砖恢复原厂用）**：[Globitel-BT-R320-stock-backup.zip](https://github.com/2286927/ImmortalWrt-MultiDevice/releases/download/BT-R320-stock-backup/Globitel-BT-R320-stock-backup.zip)（约 458 MB，含 GPT/bl2/fip/factory/kernel/rootfs/userdata 七分区与 sha256 清单；存于独立 Release `BT-R320-stock-backup`，**永久保留、不参与编译覆盖**）
 - 后续新版本以 Release 页为准，本包为当前版本快照
