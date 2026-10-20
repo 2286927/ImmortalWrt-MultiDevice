@@ -201,6 +201,9 @@ do_status() {
     echo "auto_apply:  $(get_opt auto_apply)"
     _m=$(get_opt mirror); echo "mirror:      ${_m:-auto}"
     echo "local build: $(local_run_id)"
+    if [ -s "$VERSION_FILE" ]; then
+        echo "release_title: $(sed -n 's/^RELEASE_TITLE=//p' "$VERSION_FILE" | head -n 1)"
+    fi
     if [ -f "$PENDING_FILE" ]; then
         echo "pending:     build#$(cat "$PENDING_FILE" 2>/dev/null)（可执行 autoupdate apply）"
     else
