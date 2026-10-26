@@ -241,6 +241,14 @@ jobs:
           grep -q 'ipkg_ver("aria2") or "unknown"' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua || { echo "::error::aria2 cbi L151 防护注入失败"; exit 1; }
           grep -q '(ipkg_ver(pkg) or ""):gsub' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua || { echo "::error::aria2 cbi L42 防护注入失败"; exit 1; }
           grep -q 'pcall(require, "luci.model.ipkg")' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/controller/aria2.lua || { echo "::error::aria2 controller 兜底注入失败"; exit 1; }
+          # r29: ①aria2c 在 procd jail 沙箱内 dlopen OpenSSL legacy provider 失败（宿主直跑正常，
+          # OSSL_PROVIDER_load 'legacy' failed → crash loop）——移除 jail 三行，下载器场景沙箱收益低；
+          # ②25.12 下 S99dockerd 开机未执行（/tmp/dockerd 不生成 + logread 零痕迹，重启复现实锤）——
+          # diymo.sh 尾部加延迟 30s 显式拉起兜底（procd 幂等，rcS 恢复后也不会双重启动）。
+          sed -i '/^[[:space:]]*procd_add_jail /d; /^[[:space:]]*procd_add_jail_mount/d' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/init.d/aria2
+          sed -i '/^\/etc\/init.d\/aria2 restart$/a\# r29: 25.12 S99dockerd 不执行兜底（延迟 30s 显式拉起，procd 幂等）\n(sleep 30; /etc/init.d/dockerd enabled \&\& { /etc/init.d/dockerd running || /etc/init.d/dockerd start; }) \&' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/diymo.sh
+          ! grep -q 'procd_add_jail' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/init.d/aria2 || { echo "::error::aria2 jail 移除失败"; exit 1; }
+          grep -q 'sleep 30' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/diymo.sh || { echo "::error::dockerd 延迟启动注入失败"; exit 1; }
           if [ ! -d "./files" ]; then mkdir ./files; fi
           cp -rf $GITHUB_WORKSPACE/${{ env.OWRT_FILES }}/* ./files
           # 去掉多余的dhcp文件，让首次启动有dhcp服务
