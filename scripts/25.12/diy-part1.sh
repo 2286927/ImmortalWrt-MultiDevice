@@ -1,14 +1,19 @@
 #!/bin/bash
 #=============================================================
-# ImmortalWrt DIY 脚本 1（feeds 更新之前执行）
-#
-# v2.0 起，第三方软件包的导入与"官方同名清理（第三方优先）"统一由
-#   diy-part2.sh + scripts/common/package-sync.sh
-# 完成（清理需要官方 feeds 目录做对照，因此必须在
-# feeds update/install 之后运行，即移至 diy-part2 阶段）。
-#
-# 本脚本保留为占位，便于以后添加：
-#   - 自定义 feed 源（追加 feeds.conf.default）
-#   - 源码树清理 / 补丁注入等前置逻辑
+# ImmortalWrt DIY 脚本 1（feeds 更新之前执行，cwd = openwrt/）
+# 25.12 全线共用：R68S / CM520 / RAX3000M / OCTOPUS / ONECLOUD / newifi …
 #=============================================================
-echo "===== diy-part1.sh（25.12）执行：无需本地处理，第三方包导入与去重在 diy-part2.sh 中进行 ====="
+
+# 修复 LuCI 软件包版本号显示 "0.xxx » 26.xxx" 的问题：
+# ImmortalWrt 官方 feeds.conf.default 仍使用 src-git（git clone --depth 1 浅克隆），
+# 浅历史下 luci.mk 的 findrev 取不到各包真实版本戳；若编译前 feed 的 .git 再被清理，
+# findrev 会退化为文件时间戳 fallback（0.YYMMDD.xxxxx），Updates 页出现全部"升级"误报。
+# 对齐 OpenWrt 官方 25.12 做法：src-git → src-git-full（--filter=blob:none 完整提交历史），
+# 使 luci-base / luci-app-* / luci-theme-* 等获得真实版本戳（26.DDD.SSSSS~hash）。
+if [ -f feeds.conf.default ]; then
+  sed -i -E 's|^src-git([[:space:]])|src-git-full\1|' feeds.conf.default
+  echo ">>> feeds.conf.default 已切换为 src-git-full："
+  grep '^src-git' feeds.conf.default
+else
+  echo "::warning::feeds.conf.default 不存在，跳过 src-git-full 切换"
+fi

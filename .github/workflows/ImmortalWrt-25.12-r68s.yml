@@ -507,9 +507,10 @@ jobs:
             exit 1
           }
 
-          # 磁盘防护：feeds 均为 full clone，删除 .git 元数据（约 1.5-2GB），Makefile 不受影响
-          rm -rf feeds/*/.git 2>/dev/null || true
-          echo ">>> feeds 磁盘占用（已清理 .git）：$(du -sh feeds 2>/dev/null | awk '{print $1}')"
+          # ⚠️ 保留 feeds/*/.git：luci.mk 的 findrev 依赖 feed 完整 git 历史生成各包真实版本戳
+          # （feeds 已由 diy-part1.sh 切换为 src-git-full，仅拉 blob:none 元数据：luci ~79M / packages 数百M）；
+          # 删除 .git 会导致 LuCI 包版本退化为 "0.YYMMDD.xxxxx"，Updates 页显示 "0.xxx » 26.xxx"
+          echo ">>> feeds 磁盘占用：$(du -sh feeds 2>/dev/null | awk '{print $1}')"
 
       - name: 安装iStore商店
         if: (github.event.inputs.istore == 'true')
