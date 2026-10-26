@@ -30,10 +30,12 @@ get_opt() {
     sed -n "s/^[[:space:]]*option[[:space:]]*$1[[:space:]]*'\\([^']*\\)'.*/\\1/p" "$UCI_CFG" 2>/dev/null | head -n 1
 }
 
-fetch_once() { # fetch_once <url> <outfile> [timeout_sec]
-    local url="$1" out="$2" tmo="${3:-60}"
+fetch_once() { # fetch_once <url> <outfile> [timeout_sec] [resume]
+    local url="$1" out="$2" tmo="${3:-60}" resume="${4:-0}"
+    local resume_opt=""
+    [ "$resume" = "1" ] && resume_opt="-C -"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --connect-timeout 8 --max-time "$tmo" -o "$out" "$url"
+        curl -fsSL $resume_opt --connect-timeout 8 --max-time "$tmo" -o "$out" "$url"
     elif command -v uclient-fetch >/dev/null 2>&1; then
         uclient-fetch -q --timeout="$tmo" -O "$out" "$url" 2>/dev/null
     else
@@ -67,11 +69,11 @@ get_mirrors() { # 输出候选（每行一个；"-"=直连）
     esac
 }
 
-fetch() { # fetch <url> <outfile> [timeout_sec] — 多路降级：镜像前缀逐个尝试，全部失败回退直连
-    local url="$1" out="$2" tmo="${3:-60}" m u
+fetch() { # fetch <url> <outfile> [timeout_sec] [resume] — 多路降级：镜像前缀逐个尝试，全部失败回退直连
+    local url="$1" out="$2" tmo="${3:-60}" resume="${4:-0}" m u
     for m in $(get_mirrors); do
         if [ "$m" = "-" ]; then u="$url"; else u="${m}${url}"; fi
-        if fetch_once "$u" "$out" "$tmo"; then
+        if fetch_once "$u" "$out" "$tmo" "$resume"; then
             if [ "$m" != "-" ]; then
                 echo "$m" > "$MIRROR_MEM_FILE"
                 log "经镜像加速下载成功：$m"
@@ -156,16 +158,16 @@ do_apply() {
         exit 0
     fi
 
-    # 兼容 .itb / .bin：部分小内存设备（如 newifi Y1 21.02 线）发布的是 .bin 资产
+    # 兼容 .itb / .bin / .gz：Y1 21.02 线发布 .bin，R68S（MT7622 自动压缩）发布 .gz；固件大文件启用断点续传
     fw=""
-    for ext in itb bin; do
-        if fetch "$base/$prefix-sysupgrade.$ext" "/tmp/$prefix-sysupgrade.$ext" 900; then
+    for ext in itb bin gz; do
+        if fetch "$base/$prefix-sysupgrade.$ext" "/tmp/$prefix-sysupgrade.$ext" 900 1; then
             fw="/tmp/$prefix-sysupgrade.$ext"
             break
         fi
     done
     if [ -z "$fw" ]; then
-        log "固件下载失败（$prefix-sysupgrade.itb/.bin 均失败）"
+        log "固件下载失败（$prefix-sysupgrade.itb/.bin/.gz 均失败）"
         exit 1
     fi
     shasum="$fw.sha256"
