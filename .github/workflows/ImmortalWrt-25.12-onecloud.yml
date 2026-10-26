@@ -175,14 +175,7 @@ jobs:
           sed -i 's|procd_set_param command "$PROG" -F -P "$pid_file"|procd_set_param command "$PROG" -F -P "$pid_file" -B|' \
             package/network/services/dropbear/files/dropbear.init
           grep -q -- '-B' package/network/services/dropbear/files/dropbear.init || { echo "::error::dropbear -B 注入失败"; exit 1; }
-          # r26: openssh-server 让位——固件内 dropbear(-B,S19) 与 openssh-server(S50) 双装抢 22，
-          # sshd 一旦占 22 则空密码登录被拒（PermitEmptyPasswords 默认 no，user 明确要空密码 ssh）。
-          # 处理：sshd 命令行 -o 强制 Port=2222+允许空密码/密码登录（-o 优先于 sshd_config，
-          # 旧设备 conffile 残留也生效），22 端口归 dropbear(-B) 独占；SFTP/mdns 保留走 2222。
-          sed -i 's|procd_set_param command $PROG -D|procd_set_param command $PROG -D -o Port=2222 -o PermitRootLogin=yes -o PermitEmptyPasswords=yes -o PasswordAuthentication=yes|' feeds/packages/net/openssh/files/sshd.init
-          grep -q 'PermitEmptyPasswords=yes' feeds/packages/net/openssh/files/sshd.init || { echo "::error::sshd init 注入失败"; exit 1; }
-          sed -i 's|lport=22$|lport=2222|' feeds/packages/net/openssh/files/sshd.init
-          grep -q '&& lport=2222' feeds/packages/net/openssh/files/sshd.init || { echo "::error::sshd mdns 端口注入失败"; exit 1; }
+          # r27: openssh-server 已在 config 禁用（仅保留 dropbear -B，22 端口空密码 SSH），r26 的 sshd 让位注入随之移除
 
       - name: r24恢复rust feed（方案A：官方dufs源码编译依赖）
         working-directory: /workdir/openwrt
