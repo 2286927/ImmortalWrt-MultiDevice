@@ -9,6 +9,8 @@
 #      /lib/modules 目录名（防止 boot/rootfs 资产不配套）
 #   6. v6（2026-09-22）：复用模式来源一致性校验——本地包与目标 Release 不同源时
 #      自动清理重下（防旧版本包被误复用升到旧版）；来源标记 /opt/rfs-upgrade/.rootfs_url
+#   8. v8（2026-10-26）：--reboot 改 nohup 后台执行——原前台 sleep 10 会被 SSH 会话关闭
+#      （SIGHUP）杀掉，导致 10 秒后不自动重启需手动 reboot；现在断开终端也能按时重启
 #   7. v7（2026-10-10）：rootfs 容量预检——896M 固定分区下解包前校验 / 剩余空间 ≥200MB，
 #      防未来 rootfs 增长逼近分区上限时升级失败
 #   5. v5（2026-09-22）：空间预检感知包复用——升级包已在位时门槛 400MB→150MB
@@ -320,9 +322,9 @@ log "升级完成！目标固件内核: $PKG_KV / 后端: $([ "$PKG_HAS_NGINX" =
 log "备份位置: $BACKUP（确认系统正常后可删除）"
 log "重启后新内核生效：reboot"
 if [ "$REBOOT" = "yes" ]; then
-  log "--reboot 参数生效，10 秒后自动重启（Ctrl+C 取消）…"
-  sleep 10
-  reboot
+  nohup sh -c "sleep 10 && sync && reboot" >/dev/null 2>&1 &
+  RB_PID=$!
+  log "--reboot 参数生效，10 秒后自动重启（断开 SSH 也不影响；取消: kill $RB_PID）…"
 else
   log "请手动执行: reboot"
 fi
