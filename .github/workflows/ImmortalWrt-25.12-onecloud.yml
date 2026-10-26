@@ -229,6 +229,18 @@ jobs:
           echo "=== meson8b 配置关键项 ==="
           grep -E "^CONFIG_TARGET_(amlogic|BOARD|SUBTARGET|PROFILE|DEVICE)" .config | head -8 || true
 
+          # r28: 配方自带旧版 luci-app-aria2（lua cbi）在 25.12（APK 包管理）下崩溃——
+          # ipkg_ver() 读 /usr/lib/opkg/info/*.control，目录不存在返回 nil → cbi 渲染崩
+          # （aria2.lua:151 attempt to concatenate a nil value；L199 ipkg_ver_lined 同病）；
+          # controller 依赖的 luci.model.ipkg 模块在 25.12 已移除 → 状态页 require 同样会崩。
+          # 三处防护注入（cbi 两处 + controller require pcall 兜底）：版本显示 unknown、
+          # yaaw/webui 状态恒未安装，其余功能不变。
+          sed -i 's|o.placeholder = "aria2/" .. ipkg_ver("aria2")|o.placeholder = "aria2/" .. (ipkg_ver("aria2") or "unknown")|' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua
+          sed -i 's|return ipkg_ver(pkg):gsub("%.", "-")|return (ipkg_ver(pkg) or ""):gsub("%.", "-")|' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua
+          sed -i 's|local ipkg = require "luci.model.ipkg"|local ipkg = (function() local ok, m = pcall(require, "luci.model.ipkg"); if ok then return m end; return setmetatable({}, {__index = function() return function() return false end end}) end)()|' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/controller/aria2.lua
+          grep -q 'ipkg_ver("aria2") or "unknown"' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua || { echo "::error::aria2 cbi L151 防护注入失败"; exit 1; }
+          grep -q '(ipkg_ver(pkg) or ""):gsub' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua || { echo "::error::aria2 cbi L42 防护注入失败"; exit 1; }
+          grep -q 'pcall(require, "luci.model.ipkg")' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/controller/aria2.lua || { echo "::error::aria2 controller 兜底注入失败"; exit 1; }
           if [ ! -d "./files" ]; then mkdir ./files; fi
           cp -rf $GITHUB_WORKSPACE/${{ env.OWRT_FILES }}/* ./files
           # 去掉多余的dhcp文件，让首次启动有dhcp服务
