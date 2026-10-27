@@ -158,7 +158,7 @@ jobs:
           bash $GITHUB_WORKSPACE/recipe/sh/lean2.sh
           bash $GITHUB_WORKSPACE/recipe/sh/new_remove.sh
           sed -i '/ssh-pkdsrv_auth/d' package/network/services/dropbear/files/dropbear.init 2>/dev/null || true
-          grep -q -- '-B' package/network/services/dropbear/files/dropbear.init || sed -i 's/^DROPBEAR_OPTIONS:=/DROPBEAR_OPTIONS:= -B /' package/network/services/dropbear/files/dropbear.init
+          grep -q -- '-B' package/network/services/dropbear/files/dropbear.init || sed -i 's|procd_set_param command "$PROG" -F -P "$pid_file"|procd_set_param command "$PROG" -F -B -P "$pid_file"|' package/network/services/dropbear/files/dropbear.init
           grep -q -- '-B' package/network/services/dropbear/files/dropbear.init || { echo "::error::dropbear -B 注入失败"; exit 1; }
           dos2unix $GITHUB_WORKSPACE/recipe/onecloud/files/etc/*.sh
           dos2unix $GITHUB_WORKSPACE/recipe/onecloud/files/etc/rc.*
