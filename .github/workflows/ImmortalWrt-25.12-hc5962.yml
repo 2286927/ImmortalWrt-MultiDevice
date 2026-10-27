@@ -335,22 +335,6 @@ jobs:
           echo ">>> /tmp 扩容完成"
           df -hT /tmp
 
-      - name: 加装 8GB swap（大件编译 OOM 防护）
-        run: |
-          # r33: HC5962 线建线以来 6 连败（65-122min 漂移死点+runner VM 暴毙+日志 BlobNotFound）
-          # 根因候选=Go/Rust 大件（adguardhome/ddns-go/dufs/singbox/xray/shadowsocks-rust×2）链接期
-          # 并发内存超 16GB，oom-killer 连 runner agent 一起杀；加装 swap 缓冲峰值
-          SWAPF="$GITHUB_WORKSPACE/swapfile"
-          if ! swapon --show | grep -q swapfile; then
-            sudo fallocate -l 8G "$SWAPF" 2>/dev/null || sudo dd if=/dev/zero of="$SWAPF" bs=1M count=8192 status=none
-            sudo chmod 600 "$SWAPF"
-            sudo mkswap "$SWAPF"
-            sudo swapon "$SWAPF"
-          fi
-          echo "=== 内存与 swap ==="
-          free -h
-          swapon --show || true
-
       - name: 克隆源码
         working-directory: ${{ github.workspace }}/workdir
         run: |
@@ -645,7 +629,7 @@ jobs:
           (
             RUNTIME_MAX=$MAX_GROWTH
             LAST_OUTPUT_TIME=$(date +%s)
-            INTERVAL=300
+            INTERVAL=180
             # 颜色定义
             RED="\033[31m"
             GREEN="\033[32m"
@@ -684,6 +668,20 @@ jobs:
               # 磁盘监控
               # -------------------------
               USED=$(df -B1 "${GITHUB_WORKSPACE}" | awk 'NR==2{print $3}')
+              AVAIL=$(df -B1 "${GITHUB_WORKSPACE}" | awk 'NR==2{print $4}')
+              # r34 磁盘熔断金丝雀：可用<4GB 主动杀 make+取证+正常失败（保证日志上传，破 BlobNotFound 死局）
+              if [ "$AVAIL" -lt 4294967296 ]; then
+                echo "🚨 磁盘熔断：可用仅 $(($AVAIL/1024/1024))MB，主动终止编译并取证（r34）"
+                pkill -f "make -j" 2>/dev/null || true
+                sleep 5
+                echo "=== r34 取证 df -hT ==="; df -hT
+                echo "=== r34 取证 workspace 顶层 ==="; du -xh --max-depth=1 "$GITHUB_WORKSPACE" 2>/dev/null | sort -rh | head -12
+                echo "=== r34 取证 openwrt 子目录 ==="; du -xh --max-depth=1 "$GITHUB_WORKSPACE/openwrt" 2>/dev/null | sort -rh | head -15
+                echo "=== r34 取证 build_dir 大头 ==="; du -xh --max-depth=1 "$GITHUB_WORKSPACE/openwrt/build_dir" 2>/dev/null | sort -rh | head -15
+                echo "=== r34 取证 dmesg tail ==="; sudo dmesg 2>/dev/null | tail -50 || true
+                echo "=== r34 取证 内存 ==="; free -h
+                exit 99
+              fi
               DELTA=$((USED - START))
               if [ $DELTA -gt $RUNTIME_MAX ]; then
                 RUNTIME_MAX=$DELTA
