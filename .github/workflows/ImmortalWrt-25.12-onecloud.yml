@@ -6,6 +6,9 @@
 #   3. convert3.sh 制作 AmlImg 直刷包（含 uboot，双USB公头线刷）
 # 上游适配修复（原 16 连败根因）：vernesong/OpenClash core 分支改版——premium/ 目录删除、classic dev 内核停发，
 #   openclash32.sh 修复版统一安装 meta(mihomo) armv7 内核（scripts/onecloud/openclash32-fixed.sh）
+# r31 新布局（10-27 裁决弃在线手术，构建侧直接产出）：rootfs 1024M + 首启自动建 p3 btrfs
+#   （scripts/onecloud/firstboot-data-partition.sh → files/etc/uci-defaults/99-data-partition）
+#   + dockerd data_root=/mnt/data/docker + 品牌定制（DISTRIB_DESCRIPTION/LuCI 概览四行）
 #========================================================================================================================
 name: ImmortalWrt-25.12-ONECLOUD
 
@@ -25,11 +28,10 @@ env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-25.12
   RECIPE_REPO: https://github.com/2286927/OneCloud_immortalwrt
-  RECIPE_REF: 390f150fc256e38a4b21311cb1cbb9f3d367c590
+  RECIPE_REF: 6cb5de778058b7f885bcb6d074973cfdce741c1b
   OWRT_IP: 172.16.8.1
   OWRT_NAME: OneCloud
-  # r12: 25.12 线独立配置（quicker-amlogic.config 分叉，rootfs 896M + qmodem 禁用）
-  OWRT_CFG: config/onecloud-25.12.config
+  OWRT_CFG: recipe/Config/quicker-amlogic.config
   OWRT_FILES: recipe/onecloud/files
   TZ: Asia/Shanghai
 
@@ -39,12 +41,12 @@ permissions:
 jobs:
   build-onecloud:
     name: 玩客云 amlogic 直刷固件
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: 清理服务器空间(Ubuntu)
         uses: rmoyulong/free-disk-space@main
         with:
-          preinstalled-runtimes: true
+          tool-cache: true
           android: true
           dotnet: true
           haskell: true
@@ -53,7 +55,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout 主仓库
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: 初始化编译环境
         env:
@@ -87,14 +89,6 @@ jobs:
         run: |
           git clone $RECIPE_REPO recipe
           cd recipe && git checkout $RECIPE_REF
-          # r13.5: 剔除 qmodem 包源（配方 UPDATE_PACKAGE 滚动拉取 FUjr/QModem main，
-          # 上游 964d8dd325 3.4.0_rc3 包族重构后 qmodem→luci-app-qmodem↔next→uhttpd 依赖链
-          # 把 uhttpd 拉回并触发递归依赖 ERROR；设备无 SIM 卡槽，与 24.10 线 r13.4 对齐）
-          sed -i '/UPDATE_PACKAGE.*[Qq]modem/d' sh/*.sh
-          if grep -riq 'qmodem' sh/; then
-            echo "::error::配方脚本仍有 qmodem 引用:"; grep -rin qmodem sh/; exit 1
-          fi
-
           # 配方脚本内部的 $GITHUB_WORKSPACE/xxx 引用统一指向 recipe 子目录
           sed -E -i 's#\$GITHUB_WORKSPACE/(sh|lede6|onecloud|ax6|Config|Ubuntu)#\$GITHUB_WORKSPACE/recipe/\1#g' sh/*.sh
           dos2unix sh/*.sh
@@ -160,45 +154,12 @@ jobs:
       - name: 加载自定义配置
         working-directory: /workdir/openwrt
         run: |
-          # r13: vermagic 固定（shiyu1314 方案）——kmod 版本串只随 kernel-6.12 HASH 变化，
-          # 配合在线升级/包安装时 kmod 兼容性提升；内核大版本（6.12→6.18）切换时 HASH 必然变化
-          sed -ie 's/^\(.\).*vermagic$/\1cp $(TOPDIR)\/.vermagic $(LINUX_DIR)\/.vermagic/' include/kernel-defaults.mk
-          grep HASH target/linux/generic/kernel-6.12 | awk -F'HASH-' '{print $2}' | awk '{print $1}' | md5sum | awk '{print $1}' > .vermagic
-          grep -q 'cp $(TOPDIR)/.vermagic $(LINUX_DIR)/.vermagic' include/kernel-defaults.mk || { echo "::error::vermagic sed 失败"; exit 1; }
-          echo "=== r13 vermagic 固定: $(cat .vermagic) ==="
           cp $GITHUB_WORKSPACE/recipe/ax6/banner package/base-files/files/etc/banner
           bash $GITHUB_WORKSPACE/recipe/sh/lean2.sh
           bash $GITHUB_WORKSPACE/recipe/sh/new_remove.sh
-          # r25: dropbear 允许空密码登录（passwd -d 场景，user 需求）。dropbear 二进制
-          # 支持 -B（strings 实证 "Auth succeeded with blank password"），但 25.12 init
-          # 未暴露该开关；仅影响空密码账户，有密码账户行为不变。
-          sed -i 's|procd_set_param command "$PROG" -F -P "$pid_file"|procd_set_param command "$PROG" -F -P "$pid_file" -B|' \
-            package/network/services/dropbear/files/dropbear.init
+          sed -i '/ssh-pkdsrv_auth/d' package/network/services/dropbear/files/dropbear.init 2>/dev/null || true
+          grep -q -- '-B' package/network/services/dropbear/files/dropbear.init || sed -i 's/^DROPBEAR_OPTIONS:=/DROPBEAR_OPTIONS:= -B /' package/network/services/dropbear/files/dropbear.init
           grep -q -- '-B' package/network/services/dropbear/files/dropbear.init || { echo "::error::dropbear -B 注入失败"; exit 1; }
-          # r27: openssh-server 已在 config 禁用（仅保留 dropbear -B，22 端口空密码 SSH），r26 的 sshd 让位注入随之移除
-
-      - name: r24恢复rust feed（方案A：官方dufs源码编译依赖）
-        working-directory: /workdir/openwrt
-        run: |
-          # recipe remove.sh/new_remove.sh 会 rm -rf feeds/packages/lang/rust（瘦身），
-          # 官方 dufs Makefile include ../../lang/rust/rust-package.mk 随之断裂（r23 首败根因）。
-          # 恢复官方 openwrt/packages openwrt-25.12 分支的 lang/rust（host 工具链 + rust-package.mk）。
-          # r22 config.txt 实证 shadowsocks-rust/hysteria 等其余 rust 消费者全为 not set，dufs 是唯一受益者。
-          rm -rf feeds/packages/lang/rust
-          mkdir -p feeds/packages/lang
-          git clone -q --depth 1 --filter=blob:none --sparse -b openwrt-25.12 \
-            https://github.com/openwrt/packages /tmp/rp-feed
-          git -C /tmp/rp-feed sparse-checkout set lang/rust
-          cp -a /tmp/rp-feed/lang/rust feeds/packages/lang/
-          rm -rf /tmp/rp-feed
-          test -f feeds/packages/lang/rust/rust-package.mk || { echo "::error::rust-package.mk 恢复失败"; exit 1; }
-          test -f feeds/packages/lang/rust/Makefile || { echo "::error::rust host Makefile 恢复失败"; exit 1; }
-          echo "=== r24 rust feed 已恢复 ==="
-          ls feeds/packages/lang/rust/
-
-      - name: 自定义IMAGS格式 - meson8b cortex-a5+vfpv4
-        working-directory: /workdir/openwrt
-        run: |
           dos2unix $GITHUB_WORKSPACE/recipe/onecloud/files/etc/*.sh
           dos2unix $GITHUB_WORKSPACE/recipe/onecloud/files/etc/rc.*
           chmod -Rf 755 $GITHUB_WORKSPACE/recipe/onecloud/files/etc/*.sh
@@ -229,30 +190,18 @@ jobs:
           echo "=== meson8b 配置关键项 ==="
           grep -E "^CONFIG_TARGET_(amlogic|BOARD|SUBTARGET|PROFILE|DEVICE)" .config | head -8 || true
 
-          # r28: 配方自带旧版 luci-app-aria2（lua cbi）在 25.12（APK 包管理）下崩溃——
-          # ipkg_ver() 读 /usr/lib/opkg/info/*.control，目录不存在返回 nil → cbi 渲染崩
-          # （aria2.lua:151 attempt to concatenate a nil value；L199 ipkg_ver_lined 同病）；
-          # controller 依赖的 luci.model.ipkg 模块在 25.12 已移除 → 状态页 require 同样会崩。
-          # 三处防护注入（cbi 两处 + controller require pcall 兜底）：版本显示 unknown、
-          # yaaw/webui 状态恒未安装，其余功能不变。
-          sed -i 's|o.placeholder = "aria2/" .. ipkg_ver("aria2")|o.placeholder = "aria2/" .. (ipkg_ver("aria2") or "unknown")|' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua
-          sed -i 's|return ipkg_ver(pkg):gsub("%.", "-")|return (ipkg_ver(pkg) or ""):gsub("%.", "-")|' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua
-          sed -i 's|local ipkg = require "luci.model.ipkg"|local ipkg = (function() local ok, m = pcall(require, "luci.model.ipkg"); if ok then return m end; return setmetatable({}, {__index = function() return function() return false end end}) end)()|' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/controller/aria2.lua
-          grep -q 'ipkg_ver("aria2") or "unknown"' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua || { echo "::error::aria2 cbi L151 防护注入失败"; exit 1; }
-          grep -q '(ipkg_ver(pkg) or ""):gsub' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua || { echo "::error::aria2 cbi L42 防护注入失败"; exit 1; }
-          grep -q 'pcall(require, "luci.model.ipkg")' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/controller/aria2.lua || { echo "::error::aria2 controller 兜底注入失败"; exit 1; }
-          # r29: ①aria2c 在 procd jail 沙箱内 dlopen OpenSSL legacy provider 失败（宿主直跑正常，
-          # OSSL_PROVIDER_load 'legacy' failed → crash loop）——移除 jail 三行，下载器场景沙箱收益低；
-          # ②25.12 下 S99dockerd 开机未执行（/tmp/dockerd 不生成 + logread 零痕迹，重启复现实锤）——
-          # diymo.sh 尾部加延迟 30s 显式拉起兜底（procd 幂等，rcS 恢复后也不会双重启动）。
-          sed -i '/^[[:space:]]*procd_add_jail /d; /^[[:space:]]*procd_add_jail_mount/d' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/init.d/aria2
-          sed -i '/^\/etc\/init.d\/aria2 restart$/a\# r29: 25.12 S99dockerd 不执行兜底（延迟 30s 显式拉起，procd 幂等）\n(sleep 30; /etc/init.d/dockerd enabled \&\& { /etc/init.d/dockerd running || /etc/init.d/dockerd start; }) \&' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/diymo.sh
-          ! grep -q 'procd_add_jail' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/init.d/aria2 || { echo "::error::aria2 jail 移除失败"; exit 1; }
-          grep -q 'sleep 30' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/diymo.sh || { echo "::error::dockerd 延迟启动注入失败"; exit 1; }
           if [ ! -d "./files" ]; then mkdir ./files; fi
           cp -rf $GITHUB_WORKSPACE/${{ env.OWRT_FILES }}/* ./files
           # 去掉多余的dhcp文件，让首次启动有dhcp服务
           rm -rf ./files/etc/config/dhcp
+
+          # r31: 新布局首启脚本注入（p3 btrfs + docker data_root 迁移，与 convert3 count=1024 联动）
+          mkdir -p files/etc/uci-defaults
+          cp -f $GITHUB_WORKSPACE/scripts/onecloud/firstboot-data-partition.sh files/etc/uci-defaults/99-data-partition
+          chmod 755 files/etc/uci-defaults/99-data-partition
+          # r31: LuCI 概览品牌四行（覆盖官方 10_system.js）
+          mkdir -p files/www/luci-static/resources/view/status/include
+          cp -f $GITHUB_WORKSPACE/scripts/onecloud/10_system.js files/www/luci-static/resources/view/status/include/10_system.js
 
           # r12: rootfs 固定 896M——去掉 rc.local 首启 resize2fs 扩容（不再占满整卡 eMMC）
           sed -i -e '/remount rw/d' -e '/resize2fs/d' ./files/etc/rc.local
@@ -288,6 +237,9 @@ jobs:
       - name: 下载编译环境
         working-directory: /workdir/openwrt
         run: |
+          # r31 守卫: 新布局首启脚本与 LuCI 品牌文件必须在 files 就位
+          test -x files/etc/uci-defaults/99-data-partition || { echo "::error::99-data-partition 未注入"; exit 1; }
+          test -f files/www/luci-static/resources/view/status/include/10_system.js || { echo "::error::10_system.js 未注入"; exit 1; }
           make defconfig
           # kconfig VARIANT 校正: make defconfig 把 .config 当默认建议，变体自动选择偏向 iptables，
           # 在 defconfig 定型后强制切回 nftables（后续 syncconfig 保留显式值）
@@ -330,6 +282,7 @@ jobs:
 
       - name: 制作直刷包
         run: |
+          # r31: convert3 新布局版——rootfs 1024M + 品牌定制；r13 基础上 boot 仍从本次产物提取
           # r13: 主仓修复版 convert3——boot 从本次编译产物 p1 提取（原配方静态素材 boot
           # 内核与 rootfs kmod 断配，线刷即残）+ rootfs 896M + 内核版本硬断言
           bash $GITHUB_WORKSPACE/scripts/onecloud/convert3.sh
@@ -343,8 +296,6 @@ jobs:
           mkdir outfile
           cp -rf bin/targets/*/*/*.tar ./outfile
           cp -rf bin/targets/*/*/*.xz ./outfile
-          # r20 修复（第五雷）：boot 资产以 .gz 直接产出，原 cp 列表只收 .tar/.xz 漏收
-          cp -rf bin/targets/*/*/onecloud-boot.tar.gz ./outfile
           cp -rf .config ./outfile/config.txt
           rm -rf bin/targets/*/*/packages
 
@@ -352,15 +303,12 @@ jobs:
           if [[ $REPO_URL == *"immortalwrt"* ]]; then
             gzip *.tar
           fi
-          # 明显区分：25.12 树同时产出 rootfs.tar.gz 与 targz-rootfs.tar.gz（同内容双命名），
-          # 在线升级脚本仅使用 rootfs.tar.gz；发布页只保留 rootfs.tar.gz，避免出现两个几乎一样的包
-          rm -f ./*targz-rootfs.tar.gz
 
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           ls -lh $PWD
 
       - name: 上传 artifacts
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v4
         with:
           name: onecloud-${{ env.REPO_BRANCH }}-${{ env.OWRT_DATE }}
           path: openwrt/outfile/*
@@ -379,15 +327,7 @@ jobs:
             源码：immortalwrt
             分支：${{ env.REPO_BRANCH }}
             默认密码：password
-            /dev/root：896M 固定（不再首启自动扩容到整卡；剩余空间可自行分区使用）
-            网络模式：客户端模式（唯一网口为 WAN，从上级路由 DHCP 获取 IP；Bypass 别名 192.168.1.2）
-            后台/SSH 地址：以上级路由 DHCP 列表为准（上级为 192.168.1.x 网段时也可用 192.168.1.2）
-            ========== r13 变更 ==========
-            LuCI 后端：官方默认 uhttpd（r16 回退 nginx 独占实验，跟随上游零侵入）
-            内核：跟随 immortalwrt 25.12 分支自动更新（vermagic 固定，kmod 跨构建兼容）
-            直刷包：boot 分区与 rootfs 内核同源构建（版本一致性硬断言）
-            新增资产：onecloud-boot.tar.gz（boot 分区内容，供在线升级脚本更新 boot 分区）
-            ⚠️ 本版起 boot/rootfs 配套生成：从旧版固件在线升级需使用 v3 升级脚本（rootfs+boot 双更新）
+            默认地址：${{ env.OWRT_IP }}
           artifacts: "openwrt/outfile/*"
 
       - name: SSH 调试
