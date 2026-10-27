@@ -263,13 +263,29 @@ jobs:
           fi
           echo "=== amlogic target 守卫（defconfig 后必须保留） ==="
           grep -E "^CONFIG_TARGET_amlogic=y" .config || { echo "::error::amlogic target 被 defconfig 清除，注入失败"; exit 1; }
-          # 单网口精简守卫：fw3 与 kmod-ipt-ipset 不得被依赖链拉回
+          # 单网口精简守卫 r32：fw3/kmod-ipt-ipset/mihomo 系不得在最终 .config 出现
           # （offload/nat/nat6/compat/odhcpd 为 turboacc/dnsmasq-full-dhcpv6/iptables-nft 锁定依赖，白名单放行）
-          if grep -qE '^CONFIG_PACKAGE_(firewall|kmod-ipt-ipset)=y' .config; then
-            echo "::error::单网口精简失败，以下包被依赖链拉回:"
-            grep -E '^CONFIG_PACKAGE_(firewall|kmod-ipt-ipset)=y' .config
+          # r32 根因: Packages.sh 克隆的 nikki 源 mihomo-alpha/meta 互相 DEPENDS（Kconfig 递归依赖），
+          #   打破循环后幽灵激活，其 legacy 依赖连坐拉回 kmod-ipt-ipset——自动压回源+症状并二次 defconfig，
+          #   二次仍在=真硬依赖，fail 人工裁决
+          for _i in 1 2; do
+            if grep -qE '^CONFIG_PACKAGE_(firewall|kmod-ipt-ipset|mihomo-alpha|mihomo-meta)=y' .config; then
+              echo "第${_i}次压回: $(grep -E '^CONFIG_PACKAGE_(firewall|kmod-ipt-ipset|mihomo-alpha|mihomo-meta)=y' .config | tr '\n' ' ')"
+              sed -i -e 's/^CONFIG_PACKAGE_firewall=y/# CONFIG_PACKAGE_firewall is not set/' \
+                     -e 's/^CONFIG_PACKAGE_kmod-ipt-ipset=y/# CONFIG_PACKAGE_kmod-ipt-ipset is not set/' \
+                     -e 's/^CONFIG_PACKAGE_mihomo-alpha=y/# CONFIG_PACKAGE_mihomo-alpha is not set/' \
+                     -e 's/^CONFIG_PACKAGE_mihomo-meta=y/# CONFIG_PACKAGE_mihomo-meta is not set/' .config
+              make defconfig >/dev/null 2>&1 || true
+            else
+              break
+            fi
+          done
+          if grep -qE '^CONFIG_PACKAGE_(firewall|kmod-ipt-ipset|mihomo-alpha|mihomo-meta)=y' .config; then
+            echo "::error::单网口精简失败（二次压回仍被拉回，真硬依赖需人工裁决），拉回者:"
+            grep -E '^CONFIG_PACKAGE_(firewall|kmod-ipt-ipset|mihomo-alpha|mihomo-meta)=y' .config
             exit 1
           fi
+          echo "=== 单网口精简守卫通过（r32 自动压回机制） ==="
           make download -j$(nproc)
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
