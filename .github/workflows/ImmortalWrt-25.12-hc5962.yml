@@ -335,6 +335,22 @@ jobs:
           echo ">>> /tmp 扩容完成"
           df -hT /tmp
 
+      - name: 加装 8GB swap（大件编译 OOM 防护）
+        run: |
+          # r33: HC5962 线建线以来 6 连败（65-122min 漂移死点+runner VM 暴毙+日志 BlobNotFound）
+          # 根因候选=Go/Rust 大件（adguardhome/ddns-go/dufs/singbox/xray/shadowsocks-rust×2）链接期
+          # 并发内存超 16GB，oom-killer 连 runner agent 一起杀；加装 swap 缓冲峰值
+          SWAPF="$GITHUB_WORKSPACE/swapfile"
+          if ! swapon --show | grep -q swapfile; then
+            sudo fallocate -l 8G "$SWAPF" 2>/dev/null || sudo dd if=/dev/zero of="$SWAPF" bs=1M count=8192 status=none
+            sudo chmod 600 "$SWAPF"
+            sudo mkswap "$SWAPF"
+            sudo swapon "$SWAPF"
+          fi
+          echo "=== 内存与 swap ==="
+          free -h
+          swapon --show || true
+
       - name: 克隆源码
         working-directory: ${{ github.workspace }}/workdir
         run: |
@@ -694,6 +710,9 @@ jobs:
           # -------------------------
           # 正式编译
           # -------------------------
+          # r33: Go/Rust 大件限并行，压链接期内存峰值（配合 swap 双保险）
+          export GOFLAGS="-p=2"
+          export CARGO_BUILD_JOBS=2
           stdbuf -oL -eL make -j$(nproc) 2>&1 | stdbuf -oL tee build.log
           RET=${PIPESTATUS[0]}
           kill $monitor_pid || true
