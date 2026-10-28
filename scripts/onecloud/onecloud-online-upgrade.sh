@@ -22,6 +22,7 @@
 #      ⑦ v7 防线 200MB 底线保留，输出 ×1.2 ext4 落盘参考值——不做全量硬比对：
 #         tar 流式覆盖为同名替换+净增量，非双份落盘（26.10.27 实机：可用 232MB
 #         完成约 400MB 解包内容的覆盖升级）
+#   9. v9.8（2026-10-28）：升级完成段加 rootfs 在线扩容（r38 方案B：resize2fs 吃满分区剩余，幂等）
 #   8. v8（2026-10-26）：--reboot 改 nohup 后台执行——原前台 sleep 10 会被 SSH 会话关闭
 #   9. v9.1（2026-10-28）：线刷暴露出厂缺陷修复——dropbear Interface 绑定删除（SSH 不监听根因）+ uhttpd rfc1918_filter 关闭（192.168.1.2 访问 403 根因）
 #      （SIGHUP）杀掉，导致 10 秒后不自动重启需手动 reboot；现在断开终端也能按时重启
@@ -378,6 +379,14 @@ if uci -q get uhttpd.main >/dev/null 2>&1; then
     /etc/init.d/uhttpd restart 2>/dev/null || true
     log "②已关闭 uhttpd rfc1918_filter（192.168.1.2 访问 403 修复）"
   }
+fi
+
+# ---------------- v9.8: rootfs 在线扩容（r38 方案B，幂等） ----------------
+# 旧机首启未扩容的（26.10.27 及更早），升级 tar 覆盖后顺手扩至分区全部；
+# 已扩满的输出 Nothing to do 无副作用。FS 尺寸在 tar 覆盖升级下不回退，一次扩容永久有效。
+if [ -x /usr/sbin/resize2fs ] && [ "$FSTYPE" = "ext4" ]; then
+  _GL=$(resize2fs "$ROOT_DEV" 2>&1)
+  log "rootfs 扩容: $_GL"
 fi
 
 # ---------------- v9⑤: 清理旧内核模块残留 ----------------
