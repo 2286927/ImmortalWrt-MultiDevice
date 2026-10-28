@@ -29,6 +29,9 @@
 #       die 文案改为指引从旧 Release 取 boot 放回 WORK 重跑，内核配套校验兜底）
 #       覆盖升级不删旧文件，残留 lighttpd 会继续开机自启抢 80 端口致 192.168.1.2 403；
 #       包内不含 lighttpd init.d 而本机存在时：停服务+摘自启+删文件，幂等）
+#   12. v9.11（2026-10-28 实机实证）：--url 定向模式派生 TAG——原实现 TAG 仅在默认
+#       探测路径赋值，--url 模式下 TAG 为空 → boot 直连 URL 拼成 download//资产，
+#       直连+全镜像 404 → 升级链断裂（r39 定向升级 20:39 六通道 404 实锤，与 v9.10 互补）
 #   8. v8（2026-10-26）：--reboot 改 nohup 后台执行——原前台 sleep 10 会被 SSH 会话关闭
 #   9. v9.1（2026-10-28）：线刷暴露出厂缺陷修复——dropbear Interface 绑定删除（SSH 不监听根因）+ uhttpd rfc1918_filter 关闭（192.168.1.2 访问 403 根因）
 #      （SIGHUP）杀掉，导致 10 秒后不自动重启需手动 reboot；现在断开终端也能按时重启
@@ -143,7 +146,10 @@ try_fetch(){ # $1=输出文件 $2=github原始URL
 if [ -n "${OPT_URL:-}" ]; then
   URL_ROOTFS="$OPT_URL"
   URL_BOOT=$(echo "$OPT_URL" | sed "s|$ASSET_ROOTFS|$ASSET_BOOT|")
-  log "使用手动指定 URL"
+  # v9.11: --url 模式必须派生 TAG（boot 直连 URL 构造依赖 TAG；空 TAG → download//资产 全 404）
+  TAG=$(echo "$OPT_URL" | sed -n 's|.*/download/\([^/]*\)/.*|\1|p')
+  [ -n "$TAG" ] || die "--url 地址无法识别 Release TAG（期望 .../releases/download/<TAG>/<资产>）"
+  log "使用手动指定 URL（TAG=$TAG）"
 else
   log "探测最新 Release 资产地址（法1: GitHub API，直连+镜像轮询）…"
   for _m in $GH_MIRRORS ""; do
