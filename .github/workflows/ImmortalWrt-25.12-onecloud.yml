@@ -190,6 +190,26 @@ jobs:
           echo "=== meson8b 配置关键项 ==="
           grep -E "^CONFIG_TARGET_(amlogic|BOARD|SUBTARGET|PROFILE|DEVICE)" .config | head -8 || true
 
+          # r36 重加 r28（r31 重写 yml 时丢失）: 配方自带旧版 luci-app-aria2（lua cbi）在 25.12（APK 包管理）下崩溃——
+          # ipkg_ver() 读 /usr/lib/opkg/info/*.control，目录不存在返回 nil → cbi 渲染崩
+          # （aria2.lua:151 attempt to concatenate a nil value；L199 ipkg_ver_lined 同病）；
+          # controller 依赖的 luci.model.ipkg 模块在 25.12 已移除 → 状态页 require 同样会崩。
+          # 三处防护注入（cbi 两处 + controller require pcall 兜底）：版本显示 unknown、yaaw/webui 状态恒未安装。
+          sed -i 's|o.placeholder = "aria2/" .. ipkg_ver("aria2")|o.placeholder = "aria2/" .. (ipkg_ver("aria2") or "unknown")|' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua
+          sed -i 's|return ipkg_ver(pkg):gsub("%.", "-")|return (ipkg_ver(pkg) or ""):gsub("%.", "-")|' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua
+          sed -i 's|local ipkg = require "luci.model.ipkg"|local ipkg = (function() local ok, m = pcall(require, "luci.model.ipkg"); if ok then return m end; return setmetatable({}, {__index = function() return function() return false end end}) end)()|' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/controller/aria2.lua
+          grep -q 'ipkg_ver("aria2") or "unknown"' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua || { echo "::error::aria2 cbi L151 防护注入失败"; exit 1; }
+          grep -q '(ipkg_ver(pkg) or ""):gsub' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/model/cbi/aria2.lua || { echo "::error::aria2 cbi L42 防护注入失败"; exit 1; }
+          grep -q 'pcall(require, "luci.model.ipkg")' $GITHUB_WORKSPACE/recipe/onecloud/files/usr/lib/lua/luci/controller/aria2.lua || { echo "::error::aria2 controller 兜底注入失败"; exit 1; }
+          # r36 重加 r29（r31 重写 yml 时丢失）: ①aria2c 在 procd jail 沙箱内 dlopen OpenSSL legacy provider 失败
+          # （OSSL_PROVIDER_load 'legacy' failed → crash loop）——移除 jail 三行，下载器场景沙箱收益低；
+          # ②25.12 下 S99dockerd 开机未执行（/tmp/dockerd 不生成 + logread 零痕迹，重启复现实锤）——
+          # diymo.sh 尾部加延迟 30s 显式拉起兜底（procd 幂等，rcS 恢复后也不会双重启动）。
+          sed -i '/^[[:space:]]*procd_add_jail /d; /^[[:space:]]*procd_add_jail_mount/d' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/init.d/aria2
+          sed -i '/^\/etc\/init.d\/aria2 restart$/a\# r29: 25.12 S99dockerd 不执行兜底（延迟 30s 显式拉起，procd 幂等）\n(sleep 30; /etc/init.d/dockerd enabled \&\& { /etc/init.d/dockerd running || /etc/init.d/dockerd start; }) \&' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/diymo.sh
+          ! grep -q 'procd_add_jail' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/init.d/aria2 || { echo "::error::aria2 jail 移除失败"; exit 1; }
+          grep -q 'sleep 30' $GITHUB_WORKSPACE/recipe/onecloud/files/etc/diymo.sh || { echo "::error::dockerd 延迟启动注入失败"; exit 1; }
+
           if [ ! -d "./files" ]; then mkdir ./files; fi
           cp -rf $GITHUB_WORKSPACE/${{ env.OWRT_FILES }}/* ./files
           # 去掉多余的dhcp文件，让首次启动有dhcp服务
@@ -202,6 +222,10 @@ jobs:
           # r31: LuCI 概览品牌四行（覆盖官方 10_system.js）
           mkdir -p files/www/luci-static/resources/view/status/include
           cp -f $GITHUB_WORKSPACE/scripts/onecloud/10_system.js files/www/luci-static/resources/view/status/include/10_system.js
+          # r36: 构建日期编译期注入（原 JS 正则从 release.description 提取——ubus system board 的
+          # description=OPENWRT_RELEASE 字符串不含日期，实机"构建日期"显示空白）→ 占位符直替。
+          sed -i "s/__BUILD_DATE__/$(date '+%Y-%m-%d %H:%M')/" files/www/luci-static/resources/view/status/include/10_system.js
+          if grep -q '__BUILD_DATE__' files/www/luci-static/resources/view/status/include/10_system.js; then echo "::error::构建日期注入失败"; exit 1; fi
 
           # r12: rootfs 固定 896M——去掉 rc.local 首启 resize2fs 扩容（不再占满整卡 eMMC）
           sed -i -e '/remount rw/d' -e '/resize2fs/d' ./files/etc/rc.local
@@ -233,6 +257,21 @@ jobs:
           grep -q "^${TAB}list ucode_prefix" files/etc/config/uhttpd || { echo "::error::ucode_prefix 行首非 TAB（\\t 字面化回归）"; exit 1; }
           grep -q '^tlist' files/etc/config/uhttpd && { echo "::error::tlist 字面化坏行残留"; exit 1; } || true
           grep -q 'ucode_prefix.*uhttpd.uc' files/etc/config/uhttpd || { echo "::error::uhttpd ucode_prefix 注入失败"; exit 1; }
+          # r36: 关闭 rfc1918_filter——DNS rebinding 防护拦截 Host 为 RFC1918 私网 IPv4 的请求
+          # （实机定性：Host=192.168.1.2 → 403 Forbidden；Host=[fe80::2] 链路本地非 RFC1918 → 正常登录）。
+          # 纯局域网管理服务无 rebinding 攻击面，显式置 0。
+          sed -i 's/rfc1918_filter 1/rfc1918_filter 0/' files/etc/config/uhttpd
+          grep -q 'rfc1918_filter 0' files/etc/config/uhttpd || { echo "::error::rfc1918_filter 关闭失败"; exit 1; }
+          # r36: dropbear 出厂配置修正——模板含 option Interface 'lan'，新布局（Bypass 旁路由）无 lan 接口，
+          # dropbear 绑定接口失败 → 不监听任何地址 → SSH 无法连接。覆盖为全接口监听（配合 -B 空密码放行）。
+          cat > files/etc/config/dropbear << 'DBEOF'
+          config dropbear
+                  option PasswordAuth 'on'
+                  option RootPasswordAuth 'on'
+                  option Port '22'
+          DBEOF
+          grep -q 'Interface' files/etc/config/dropbear && { echo "::error::dropbear 配置含 Interface 残留"; exit 1; } || true
+          grep -q "PasswordAuth" files/etc/config/dropbear || { echo "::error::dropbear 配置注入失败"; exit 1; }
 
       - name: 下载编译环境
         working-directory: /workdir/openwrt
@@ -286,6 +325,24 @@ jobs:
             exit 1
           fi
           echo "=== 单网口精简守卫通过（r32 自动压回机制） ==="
+          # r36: openssh-server 幽灵回归压回（r27 禁用 5 包被间接 DEPENDS 连坐拉回——Packages.sh 滚动
+          # 拉取上游配方激活依赖链；sshd 占 22 端口且 PermitRootLogin prohibit-password 拒空密码 → 出厂 SSH 失效）。
+          # r32 mihomo 同款自动压回：写回 not set → defconfig → 二次检查，仍在=真硬依赖 fail 人工裁决。
+          for _i in 1 2; do
+            if grep -qE '^CONFIG_PACKAGE_(openssh-server|openssh-server-pam|openssh-client|openssh-client-utils|openssh-keygen|openssh-sftp-server|libopenbsd-compat)=y' .config; then
+              echo "第${_i}次压回: $(grep -E '^CONFIG_PACKAGE_(openssh|libopenbsd)' .config | tr '\n' ' ')"
+              sed -i -E 's/^CONFIG_PACKAGE_(openssh-server(-pam)?|openssh-client(-utils)?|openssh-keygen|openssh-sftp-server|libopenbsd-compat)=y/# CONFIG_PACKAGE_\1 is not set/' .config
+              make defconfig >/dev/null 2>&1 || true
+            else
+              break
+            fi
+          done
+          if grep -qE '^CONFIG_PACKAGE_(openssh-server|openssh-server-pam|openssh-client|openssh-client-utils|openssh-keygen|openssh-sftp-server|libopenbsd-compat)=y' .config; then
+            echo "::error::openssh 系二次压回仍被拉回（真硬依赖需人工裁决）:"
+            grep -E '^CONFIG_PACKAGE_(openssh|libopenbsd)' .config
+            exit 1
+          fi
+          echo "=== openssh 压回守卫通过（r36） ==="
           make download -j$(nproc)
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
@@ -295,6 +352,25 @@ jobs:
         run: |
           echo -e "$(nproc) thread compile"
           make -j$(nproc) || make -j1 || make -j1 V=s
+
+      - name: r36 终检（线刷病灶八断言）
+        working-directory: /workdir/openwrt
+        run: |
+          RFS_TAR=$(ls bin/targets/*/*/immortalwrt-*-rootfs.tar.gz 2>/dev/null | head -1)
+          test -n "$RFS_TAR" || { echo "::error::rootfs.tar.gz 未找到"; exit 1; }
+          echo "终检对象: $RFS_TAR"
+          if tar -tzf "$RFS_TAR" | grep -qE '^\./?etc/init\.d/sshd$'; then echo "::error::①init.d/sshd 存在（openssh 幽灵回归）"; exit 1; else echo "PASS① 无 init.d/sshd"; fi
+          if tar -xzOf "$RFS_TAR" ./etc/config/dropbear 2>/dev/null | grep -Eq "^[[:space:]]*option[[:space:]]+Interface"; then echo "::error::②dropbear Interface 绑定残留"; exit 1; else echo "PASS② dropbear 全接口监听"; fi
+          tar -xzOf "$RFS_TAR" ./etc/init.d/dropbear 2>/dev/null | grep -q -- ' -B ' || { echo "::error::③dropbear -B 注入丢失"; exit 1; }
+          echo "PASS③ dropbear -B 在位"
+          tar -xzOf "$RFS_TAR" ./etc/config/uhttpd 2>/dev/null | grep -q 'rfc1918_filter 0' || { echo "::error::④rfc1918_filter 未关闭"; exit 1; }
+          echo "PASS④ rfc1918_filter=0"
+          if tar -xzOf "$RFS_TAR" ./etc/init.d/aria2 2>/dev/null | grep -q 'procd_add_jail'; then echo "::error::⑤aria2 jail 残留"; exit 1; else echo "PASS⑤ aria2 无 jail"; fi
+          tar -xzOf "$RFS_TAR" ./usr/lib/lua/luci/model/cbi/aria2.lua 2>/dev/null | grep -q 'or "unknown"' || { echo "::error::⑥aria2 cbi 防护缺失"; exit 1; }
+          echo "PASS⑥ aria2 cbi 防护在位"
+          tar -xzOf "$RFS_TAR" ./etc/diymo.sh 2>/dev/null | grep -q 'sleep 30' || { echo "::error::⑦diymo dockerd 延迟缺失"; exit 1; }
+          echo "PASS⑦ diymo dockerd 延迟在位"
+          if tar -xzOf "$RFS_TAR" ./www/luci-static/resources/view/status/include/10_system.js 2>/dev/null | grep -q '__BUILD_DATE__'; then echo "::error::⑧构建日期未注入"; exit 1; else echo "PASS⑧ 构建日期已注入"; fi
 
       - name: 制作直刷包
         run: |
