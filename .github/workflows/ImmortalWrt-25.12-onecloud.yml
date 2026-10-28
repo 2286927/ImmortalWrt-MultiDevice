@@ -6,9 +6,9 @@
 #   3. convert3.sh 制作 AmlImg 直刷包（含 uboot，双USB公头线刷）
 # 上游适配修复（原 16 连败根因）：vernesong/OpenClash core 分支改版——premium/ 目录删除、classic dev 内核停发，
 #   openclash32.sh 修复版统一安装 meta(mihomo) armv7 内核（scripts/onecloud/openclash32-fixed.sh）
-# r31 新布局（10-27 裁决弃在线手术，构建侧直接产出）：rootfs 1024M + 首启自动建 p3 btrfs
-#   （scripts/onecloud/firstboot-data-partition.sh → files/etc/uci-defaults/99-data-partition）
-#   + dockerd data_root=/mnt/data/docker + 品牌定制（DISTRIB_DESCRIPTION/LuCI 概览四行）
+# r38 方案B（10-28 裁决）：弃 p3 btrfs（Amlogic rootfs size=-1 到盘尾，p3 建表项内被 GPT overlap 拒）
+#   改 rootfs 首启在线扩容吃满分区剩余（scripts/onecloud/firstboot-rootfs-grow.sh → 99-rootfs-grow）
+#   docker 留 /opt + 品牌定制（DISTRIB_DESCRIPTION/LuCI 概览四行）
 #========================================================================================================================
 name: ImmortalWrt-25.12-ONECLOUD
 
@@ -215,10 +215,10 @@ jobs:
           # 去掉多余的dhcp文件，让首次启动有dhcp服务
           rm -rf ./files/etc/config/dhcp
 
-          # r31: 新布局首启脚本注入（p3 btrfs + docker data_root 迁移，与 convert3 count=1024 联动）
+          # r38 方案B: 首启 rootfs 在线扩容（resize2fs 吃满分区，替代 r31 p3 btrfs 弃案）
           mkdir -p files/etc/uci-defaults
-          cp -f $GITHUB_WORKSPACE/scripts/onecloud/firstboot-data-partition.sh files/etc/uci-defaults/99-data-partition
-          chmod 755 files/etc/uci-defaults/99-data-partition
+          cp -f $GITHUB_WORKSPACE/scripts/onecloud/firstboot-rootfs-grow.sh files/etc/uci-defaults/99-rootfs-grow
+          chmod 755 files/etc/uci-defaults/99-rootfs-grow
           # r31: LuCI 概览品牌四行（覆盖官方 10_system.js）
           mkdir -p files/www/luci-static/resources/view/status/include
           cp -f $GITHUB_WORKSPACE/scripts/onecloud/10_system.js files/www/luci-static/resources/view/status/include/10_system.js
@@ -277,7 +277,7 @@ jobs:
         working-directory: /workdir/openwrt
         run: |
           # r31 守卫: 新布局首启脚本与 LuCI 品牌文件必须在 files 就位
-          test -x files/etc/uci-defaults/99-data-partition || { echo "::error::99-data-partition 未注入"; exit 1; }
+          test -x files/etc/uci-defaults/99-rootfs-grow || { echo "::error::99-rootfs-grow 未注入"; exit 1; }
           test -f files/www/luci-static/resources/view/status/include/10_system.js || { echo "::error::10_system.js 未注入"; exit 1; }
           make defconfig
           # kconfig VARIANT 校正: make defconfig 把 .config 当默认建议，变体自动选择偏向 iptables，
