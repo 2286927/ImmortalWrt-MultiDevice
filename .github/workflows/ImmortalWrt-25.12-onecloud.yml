@@ -416,6 +416,11 @@ jobs:
           mkdir outfile
           cp -rf bin/targets/*/*/*.tar ./outfile
           cp -rf bin/targets/*/*/*.xz ./outfile
+          # r41-fix: 整理固件补 boot 资产——convert3.sh 产出 onecloud-boot.tar.gz 落 bin/targets/*/*/，
+          #   *.tar/*.xz glob 均不匹配 *.tar.gz（r19 第五雷同款），r31 重写整理段后复发，
+          #   致 r36-r40 Release 缺 boot 资产（在线升级 boot 下载 404 阻断）。
+          #   10-28 已从 r39/r40 burn.img p1 提取重打包补传两 Release（sha256 存档），本行为根治。
+          cp -f bin/targets/*/*/onecloud-boot.tar.gz ./outfile/
           cp -rf .config ./outfile/config.txt
           rm -rf bin/targets/*/*/packages
 
