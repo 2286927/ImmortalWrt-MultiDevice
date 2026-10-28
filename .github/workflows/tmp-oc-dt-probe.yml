@@ -13,8 +13,8 @@ jobs:
           echo "=== 目标 Release: $TAG ==="
           gh release view "$TAG" --repo $GITHUB_REPOSITORY --json assets --jq '.assets[].name'
           gh release download "$TAG" --repo $GITHUB_REPOSITORY --pattern '*burn.img.xz' --clobber
-          BURN=$(ls burn*.img.xz burn*.xz 2>/dev/null | head -1)
-          if [ -n "$BURN" ]; then xz -dk "$BURN"; IMG="${BURN%.xz}"; else IMG=$(ls burn*.img | head -1); fi
+          BURN=$(ls *burn.img.xz 2>/dev/null | head -1)
+          if [ -n "$BURN" ]; then xz -dk "$BURN"; IMG="${BURN%.xz}"; else IMG=$(ls *burn.img 2>/dev/null | grep -v '\.xz$' | head -1); fi
           echo "=== IMG=$IMG ($(stat -c%s $IMG) bytes) ==="
           python3 - "$IMG" << 'EOF'
           import sys, struct
