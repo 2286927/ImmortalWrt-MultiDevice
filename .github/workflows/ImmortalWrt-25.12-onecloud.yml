@@ -6,6 +6,8 @@
 #   3. convert3.sh 制作 AmlImg 直刷包（含 uboot，双USB公头线刷）
 # 上游适配修复（原 16 连败根因）：vernesong/OpenClash core 分支改版——premium/ 目录删除、classic dev 内核停发，
 #   openclash32.sh 修复版统一安装 meta(mihomo) armv7 内核（scripts/onecloud/openclash32-fixed.sh）
+# r40（10-28 裁决）：①lighttpd 剔除（r38 config 实锤出厂携带、luci-app 零依赖方，
+#   开机抢 IPv4:80 致 192.168.1.2 403；依赖链若拉回则 fail 人工裁决改 8080）②governor 全量补 conservative
 # r38 方案B（10-28 裁决）：弃 p3 btrfs（Amlogic rootfs size=-1 到盘尾，p3 建表项内被 GPT overlap 拒）
 #   改 rootfs 首启在线扩容吃满分区剩余（scripts/onecloud/firstboot-rootfs-grow.sh → 99-rootfs-grow）
 #   docker 留 /opt + 品牌定制（DISTRIB_DESCRIPTION/LuCI 概览四行）
@@ -114,11 +116,12 @@ jobs:
           mv -f target/linux/amlogic/meson8b/config-6.6 target/linux/amlogic/meson8b/config-6.12
           # r8修复1: 6.6→6.12 跨版本 kconfig 新符号预置（r8 实证 MDIO_BUS_MUX_MESON_GXL (NEW) 提示）
           grep -q "^CONFIG_MDIO_BUS_MUX_MESON_GXL=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_MDIO_BUS_MUX_MESON_GXL=m" >> target/linux/amlogic/meson8b/config-6.12
-          # r39: cpufreq governors —— 用户点名 schedutil，另补 ondemand/powersave/userspace；默认档保持 performance 不动
+          # r40: cpufreq governors 全量（r39 四个基础上补 conservative，用户裁决"全加"）；默认档保持 performance 不动
           grep -q "^CONFIG_CPU_FREQ_GOV_SCHEDUTIL=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y" >> target/linux/amlogic/meson8b/config-6.12
           grep -q "^CONFIG_CPU_FREQ_GOV_ONDEMAND=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_ONDEMAND=y" >> target/linux/amlogic/meson8b/config-6.12
           grep -q "^CONFIG_CPU_FREQ_GOV_POWERSAVE=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_POWERSAVE=y" >> target/linux/amlogic/meson8b/config-6.12
           grep -q "^CONFIG_CPU_FREQ_GOV_USERSPACE=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_USERSPACE=y" >> target/linux/amlogic/meson8b/config-6.12
+          grep -q "^CONFIG_CPU_FREQ_GOV_CONSERVATIVE=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y" >> target/linux/amlogic/meson8b/config-6.12
           # r8修复2: 移除 kconfig 未设符号中止开关（include/kernel-build.mk），其余 6.12 新符号按默认值静默取值，防 syncconfig 交互 EOF
           sed -i '/export FAIL_ON_UNCONFIGURED=1/d' include/kernel-build.mk
           # Kwrt 验证过的两个 6.12 冲突补丁
@@ -353,6 +356,21 @@ jobs:
             echo "WARNING: openssh 配件类残留（无 init.d/sshd 守护、不占 22 端口、无害放行）: $(echo "$ACC_LEFT" | tr '\n' ' ')"
           fi
           echo "=== openssh 压回守卫通过（r36 守护类清零，配件放行） ==="
+          # r40: lighttpd 剔除（r38 config 实锤 CONFIG_PACKAGE_lighttpd=y 出厂携带；luci-app 全清单零依赖方——
+          #   配方作者历史遗留显式选择，当前无软件用到。开机 init 抢占 IPv4:80 致 192.168.1.2 403 Forbidden
+          #   （uhttpd rfc1918_filter=0 无辜，fe80::2 正常即旁证）。按用户裁决移除，80 归还 uhttpd。
+          #   mihomo/openssh 同款二次压回：defconfig 后仍在=真硬依赖 fail 人工裁决（备选=改端口 8080）
+          for _i in 1 2; do
+            if grep -qE '^CONFIG_PACKAGE_lighttpd=y' .config; then
+              echo "第${_i}次压回: lighttpd"
+              sed -i 's/^CONFIG_PACKAGE_lighttpd=y$/# CONFIG_PACKAGE_lighttpd is not set/' .config
+              make defconfig >/dev/null 2>&1 || true
+            else
+              break
+            fi
+          done
+          grep -q '^CONFIG_PACKAGE_lighttpd=y' .config && { echo "::error::lighttpd 被依赖链拉回（真硬依赖需人工裁决：改端口 8080 方案）"; grep -E '^CONFIG_PACKAGE_lighttpd' .config; exit 1; }
+          echo "=== lighttpd 剔除守卫通过（80 端口归还 uhttpd） ==="
           make download -j$(nproc)
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
