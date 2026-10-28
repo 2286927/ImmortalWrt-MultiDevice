@@ -12,7 +12,7 @@ jobs:
           TAG="OneCloud_openwrt-25.12_26.10.27_19.30.58"
           echo "=== 目标 Release: $TAG ==="
           gh release view "$TAG" --repo $GITHUB_REPOSITORY --json assets --jq '.assets[].name'
-          gh release download "$TAG" --repo $GITHUB_REPOSITORY --pattern 'burn*' --clobber
+          gh release download "$TAG" --repo $GITHUB_REPOSITORY --pattern '*burn.img.xz' --clobber
           BURN=$(ls burn*.img.xz burn*.xz 2>/dev/null | head -1)
           if [ -n "$BURN" ]; then xz -dk "$BURN"; IMG="${BURN%.xz}"; else IMG=$(ls burn*.img | head -1); fi
           echo "=== IMG=$IMG ($(stat -c%s $IMG) bytes) ==="
