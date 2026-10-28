@@ -16,7 +16,7 @@ jobs:
           curl -sL --retry 3 -o qemu.tar.gz "https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-arm-static.tar.gz" && tar -xzf qemu.tar.gz
           sudo mount --bind /proc rfs/proc || true
           sudo mount --bind /dev rfs/dev || true
-          sudo cp /usr/bin/qemu-arm-static rfs/usr/bin/
+          sudo cp qemu-arm-static rfs/usr/bin/
           sudo chroot rfs /bin/sh -c "ls -la /www/index.html /www/cgi-bin/luci; ls -l /var/run 2>&1 | head -3" || true
           sudo chroot rfs /usr/bin/qemu-arm-static /usr/sbin/ubusd > ubusd.log 2>&1 &
           sleep 1
