@@ -31,10 +31,12 @@ jobs:
               off += 4
           print(f'total DTB: {n}')
           EOF
-          echo "=== 分区表解析 ==="
+          echo "=== DTS 全文 ==="
           for f in /tmp/dtb_*.dtb; do
             echo "--- $f ---"
-            dtc -I dtb -O dts "$f" 2>/dev/null | grep -B4 -A80 'partitions' | head -140
+            dtc -I dtb -O dts "$f" 2>/dev/null | head -200
           done
-          echo "=== uboot strings 分区名兜底 ==="
-          strings "$IMG" | grep -E '^(bootloader|boot|rootfs|data)$' | head -20
+          echo "=== 分区名上下文（带偏移） ==="
+          strings -t d "$IMG" | grep -E '\b(bootloader|boot|rootfs|data)\b' | head -40
+          echo "=== 分区表相关关键词 ==="
+          strings -t d "$IMG" | grep -iE 'partition|gpt|mbr|0x[0-9a-f]+ *rootfs|rootfs *0x' | head -30
