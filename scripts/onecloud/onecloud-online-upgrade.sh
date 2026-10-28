@@ -24,6 +24,9 @@
 #         完成约 400MB 解包内容的覆盖升级）
 #   9. v9.8（2026-10-28）：升级完成段加 rootfs 在线扩容（r38 方案B：resize2fs 吃满分区剩余，幂等）
 #   10. v9.9（2026-10-28）：清理被剔除包的守护残留（首例 lighttpd——r40 起固件剔除，
+# 11. v9.10（2026-10-28）：修 boot 误删死锁——不同源旧包清理保留 boot.tar.gz（boot 与
+#       Release 解耦、跨版本复用；若 Release 未携带 boot 资产，误删后重下必 die；
+#       die 文案改为指引从旧 Release 取 boot 放回 WORK 重跑，内核配套校验兜底）
 #       覆盖升级不删旧文件，残留 lighttpd 会继续开机自启抢 80 端口致 192.168.1.2 403；
 #       包内不含 lighttpd init.d 而本机存在时：停服务+摘自启+删文件，幂等）
 #   8. v8（2026-10-26）：--reboot 改 nohup 后台执行——原前台 sleep 10 会被 SSH 会话关闭
@@ -187,7 +190,9 @@ if [ -s "$WORK/rootfs.tar.gz" ] && tar -tzf "$WORK/rootfs.tar.gz" >/dev/null 2>&
     _reuse_ok=1
   else
     log "本地包与目标版本不一致（旧: ${_saved:-无记录}），清理后重新下载"
-    rm -f "$WORK/rootfs.tar.gz" "$WORK/boot.tar.gz" "$WORK/.rootfs_url"
+    # v9.10: 保留 boot.tar.gz——boot 与 rootfs 来源解耦（无 URL 一致性校验即为跨版本复用设计），
+    # 且 r39/r40 起 Release 不携带 boot 资产时误删将导致 boot 重下 die 死锁
+    rm -f "$WORK/rootfs.tar.gz" "$WORK/.rootfs_url"
   fi
 fi
 if [ "$_reuse_ok" = "1" ]; then
@@ -215,7 +220,9 @@ log "下载 boot 包: $URL_BOOT"
 if [ -s "$WORK/boot.tar.gz" ] && tar -tzf "$WORK/boot.tar.gz" >/dev/null 2>&1; then
   log "已存在通过校验的 boot 包，跳过下载（--check 复用）"
 else
-  try_fetch "$WORK/boot.tar.gz" "$URL_BOOT" || die "boot 包下载失败（直连+镜像均失败）"
+  # v9.10: die 文案含自指引——Release 未携带 boot 资产时（r39/r40 曾出现 4 资产无 boot），
+  # 从任意含 boot 资产的旧 Release 下载 onecloud-boot.tar.gz 放回 WORK 重跑即可（内核配套校验兜底）
+  try_fetch "$WORK/boot.tar.gz" "$URL_BOOT" || die "boot 包下载失败（直连+镜像均失败）。若该 Release 未携带 $ASSET_BOOT，可从旧版 Release 下载后放入 $WORK 重跑（内核配套校验会兜底）"
 fi
 ls -lh "$WORK"
 
