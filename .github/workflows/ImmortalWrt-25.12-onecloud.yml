@@ -8,6 +8,10 @@
 #   openclash32.sh 修复版统一安装 meta(mihomo) armv7 内核（scripts/onecloud/openclash32-fixed.sh）
 # r40（10-28 裁决）：①lighttpd 剔除（r38 config 实锤出厂携带、luci-app 零依赖方，
 #   开机抢 IPv4:80 致 192.168.1.2 403；依赖链若拉回则 fail 人工裁决改 8080）②governor 全量补 conservative
+# r41 修复（10-28 实机巡检）：①conservative governor 构建丢失——config-6.6 迁移件含显式
+#   not set 行与追加 =y 重复并存被内核 merge 裁剪（r40 实机 /proc/config.gz not set，仅 5 档），
+#   改 sed 原位改写；②出厂 shadow root 空 hash——Release 口径"默认密码 password"实为空密码，
+#   LuCI 空hash特例放行、dropbear crypt 严格比对拒非空（SSH 密码全拒），注入 99-root-password 首启置真 hash
 # r38 方案B（10-28 裁决）：弃 p3 btrfs（Amlogic rootfs size=-1 到盘尾，p3 建表项内被 GPT overlap 拒）
 #   改 rootfs 首启在线扩容吃满分区剩余（scripts/onecloud/firstboot-rootfs-grow.sh → 99-rootfs-grow）
 #   docker 留 /opt + 品牌定制（DISTRIB_DESCRIPTION/LuCI 概览四行）
@@ -121,7 +125,12 @@ jobs:
           grep -q "^CONFIG_CPU_FREQ_GOV_ONDEMAND=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_ONDEMAND=y" >> target/linux/amlogic/meson8b/config-6.12
           grep -q "^CONFIG_CPU_FREQ_GOV_POWERSAVE=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_POWERSAVE=y" >> target/linux/amlogic/meson8b/config-6.12
           grep -q "^CONFIG_CPU_FREQ_GOV_USERSPACE=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_USERSPACE=y" >> target/linux/amlogic/meson8b/config-6.12
-          grep -q "^CONFIG_CPU_FREQ_GOV_CONSERVATIVE=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y" >> target/linux/amlogic/meson8b/config-6.12
+          # r41: conservative 单独用 sed 原位改写——迁移件 config-6.6 含显式 "# CONFIG_CPU_FREQ_GOV_CONSERVATIVE
+          # is not set"，与下方追加 =y 重复并存时内核 merge 裁剪该符号（r40 实机 not set 实锤）；其余四 governor
+          # 在迁移件中无本体行或本就 =y，grep 追加方式已实证生效，保持不动
+          sed -i 's|^# CONFIG_CPU_FREQ_GOV_CONSERVATIVE is not set$|CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y|' target/linux/amlogic/meson8b/config-6.12
+          grep -q "^CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y" >> target/linux/amlogic/meson8b/config-6.12
+          grep -qE "^CONFIG_CPU_FREQ_GOV_(SCHEDUTIL|ONDEMAND|POWERSAVE|USERSPACE|CONSERVATIVE)=y" target/linux/amlogic/meson8b/config-6.12 || { echo "::error::governor 五项未齐"; exit 1; }
           # r8修复2: 移除 kconfig 未设符号中止开关（include/kernel-build.mk），其余 6.12 新符号按默认值静默取值，防 syncconfig 交互 EOF
           sed -i '/export FAIL_ON_UNCONFIGURED=1/d' include/kernel-build.mk
           # Kwrt 验证过的两个 6.12 冲突补丁
@@ -280,6 +289,16 @@ jobs:
           DBEOF
           grep -q 'Interface' files/etc/config/dropbear && { echo "::error::dropbear 配置含 Interface 残留"; exit 1; } || true
           grep -q "PasswordAuth" files/etc/config/dropbear || { echo "::error::dropbear 配置注入失败"; exit 1; }
+          # r41: 出厂 root 密码真 hash——配方 shadow root hash 为空，Release 口径"默认密码 password"不成立
+          # （LuCI 空hash任意值放行、SSH dropbear -B 下空 hash 仅接受空串，password 全拒）；首启置真 hash，
+          # busybox passwd stdin 模式设备端零依赖；升级场景恢复的旧 shadow 也会被首启 uci-defaults 重置
+          cat > $GITHUB_WORKSPACE/recipe/onecloud/files/etc/uci-defaults/99-root-password << 'RPEOF'
+          #!/bin/sh
+          # 出厂默认密码 password（与 Release body 口径一致；r41 修复 shadow root 空 hash）
+          printf 'password\npassword\n' | passwd root >/dev/null 2>&1
+          RPEOF
+          dos2unix $GITHUB_WORKSPACE/recipe/onecloud/files/etc/uci-defaults/99-root-password
+          chmod 755 $GITHUB_WORKSPACE/recipe/onecloud/files/etc/uci-defaults/99-root-password
 
       - name: 下载编译环境
         working-directory: /workdir/openwrt
@@ -399,6 +418,7 @@ jobs:
           tar -xzOf "$RFS_TAR" ./etc/diymo.sh 2>/dev/null | grep -q 'sleep 30' || { echo "::error::⑦diymo dockerd 延迟缺失"; exit 1; }
           echo "PASS⑦ diymo dockerd 延迟在位"
           if tar -xzOf "$RFS_TAR" ./www/luci-static/resources/view/status/include/10_system.js 2>/dev/null | grep -q '__BUILD_DATE__'; then echo "::error::⑧构建日期未注入"; exit 1; else echo "PASS⑧ 构建日期已注入"; fi
+          tar -xzOf "$RFS_TAR" ./etc/uci-defaults/99-root-password 2>/dev/null | grep -q 'passwd root' && echo "PASS⑨ 出厂密码脚本在位" || { echo "::error::⑨99-root-password 缺失"; exit 1; }
 
       - name: 制作直刷包
         run: |
