@@ -36,6 +36,10 @@ jobs:
             echo "--- $f ---"
             dtc -I dtb -O dts "$f" 2>/dev/null | head -200
           done
+          echo "=== 分区表项 hexdump（0x4200-0x4700 区域） ==="
+          dd if="$IMG" bs=1 skip=16896 count=1408 2>/dev/null | hexdump -C
+          echo "=== 烧录描述区（4800-6200） ==="
+          dd if="$IMG" bs=1 skip=4800 count=1400 2>/dev/null | hexdump -C
           echo "=== 分区名上下文（带偏移） ==="
           strings -t d "$IMG" | grep -E '\b(bootloader|boot|rootfs|data)\b' | head -40
           echo "=== 分区表相关关键词 ==="
