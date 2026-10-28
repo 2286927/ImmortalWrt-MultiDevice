@@ -337,12 +337,17 @@ jobs:
               break
             fi
           done
-          if grep -qE '^CONFIG_PACKAGE_(openssh-server|openssh-server-pam|openssh-client|openssh-client-utils|openssh-keygen|openssh-sftp-server|libopenbsd-compat)=y' .config; then
-            echo "::error::openssh 系二次压回仍被拉回（真硬依赖需人工裁决）:"
-            grep -E '^CONFIG_PACKAGE_(openssh|libopenbsd)' .config
+          GUARD_FAIL=$(grep -E '^CONFIG_PACKAGE_(openssh-server|openssh-server-pam|openssh-client|openssh-client-utils)=y' .config || true)
+          if [ -n "$GUARD_FAIL" ]; then
+            echo "::error::openssh 守护类二次压回仍被拉回（真硬依赖需人工裁决）:"
+            echo "$GUARD_FAIL"
             exit 1
           fi
-          echo "=== openssh 压回守卫通过（r36） ==="
+          ACC_LEFT=$(grep -E '^CONFIG_PACKAGE_(openssh-keygen|openssh-moduli|openssh-sftp-server|openssh-sftp-avahi-service|libopenbsd-compat)=y' .config || true)
+          if [ -n "$ACC_LEFT" ]; then
+            echo "WARNING: openssh 配件类残留（无 init.d/sshd 守护、不占 22 端口、无害放行）: $(echo "$ACC_LEFT" | tr '\n' ' ')"
+          fi
+          echo "=== openssh 压回守卫通过（r36 守护类清零，配件放行） ==="
           make download -j$(nproc)
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
