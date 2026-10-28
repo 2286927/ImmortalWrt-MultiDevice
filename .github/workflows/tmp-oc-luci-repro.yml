@@ -13,7 +13,7 @@ jobs:
           set -x
           curl -sL --retry 3 -o rootfs.tar.gz "https://github.com/2286927/ImmortalWrt-MultiDevice/releases/download/OneCloud_openwrt-25.12_26.10.27_19.30.58/immortalwrt-amlogic-meson8b-thunder-onecloud-rootfs.tar.gz"
           mkdir rfs && tar -xzf rootfs.tar.gz -C rfs
-          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static curl
+          curl -sL --retry 3 -o qemu.tar.gz "https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-arm-static.tar.gz" && tar -xzf qemu.tar.gz
           sudo mount --bind /proc rfs/proc || true
           sudo mount --bind /dev rfs/dev || true
           sudo cp /usr/bin/qemu-arm-static rfs/usr/bin/
