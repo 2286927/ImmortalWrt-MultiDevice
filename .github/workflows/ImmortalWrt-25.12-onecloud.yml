@@ -292,13 +292,13 @@ jobs:
           # r41: 出厂 root 密码真 hash——配方 shadow root hash 为空，Release 口径"默认密码 password"不成立
           # （LuCI 空hash任意值放行、SSH dropbear -B 下空 hash 仅接受空串，password 全拒）；首启置真 hash，
           # busybox passwd stdin 模式设备端零依赖；升级场景恢复的旧 shadow 也会被首启 uci-defaults 重置
-          cat > $GITHUB_WORKSPACE/recipe/onecloud/files/etc/uci-defaults/99-root-password << 'RPEOF'
+          cat > files/etc/uci-defaults/99-root-password << 'RPEOF'
           #!/bin/sh
           # 出厂默认密码 password（与 Release body 口径一致；r41 修复 shadow root 空 hash）
           printf 'password\npassword\n' | passwd root >/dev/null 2>&1
           RPEOF
-          dos2unix $GITHUB_WORKSPACE/recipe/onecloud/files/etc/uci-defaults/99-root-password
-          chmod 755 $GITHUB_WORKSPACE/recipe/onecloud/files/etc/uci-defaults/99-root-password
+          dos2unix files/etc/uci-defaults/99-root-password
+          chmod 755 files/etc/uci-defaults/99-root-password
 
       - name: 下载编译环境
         working-directory: /workdir/openwrt
