@@ -23,6 +23,9 @@
 #         tar 流式覆盖为同名替换+净增量，非双份落盘（26.10.27 实机：可用 232MB
 #         完成约 400MB 解包内容的覆盖升级）
 #   9. v9.8（2026-10-28）：升级完成段加 rootfs 在线扩容（r38 方案B：resize2fs 吃满分区剩余，幂等）
+#   10. v9.9（2026-10-28）：清理被剔除包的守护残留（首例 lighttpd——r40 起固件剔除，
+#       覆盖升级不删旧文件，残留 lighttpd 会继续开机自启抢 80 端口致 192.168.1.2 403；
+#       包内不含 lighttpd init.d 而本机存在时：停服务+摘自启+删文件，幂等）
 #   8. v8（2026-10-26）：--reboot 改 nohup 后台执行——原前台 sleep 10 会被 SSH 会话关闭
 #   9. v9.1（2026-10-28）：线刷暴露出厂缺陷修复——dropbear Interface 绑定删除（SSH 不监听根因）+ uhttpd rfc1918_filter 关闭（192.168.1.2 访问 403 根因）
 #      （SIGHUP）杀掉，导致 10 秒后不自动重启需手动 reboot；现在断开终端也能按时重启
@@ -379,6 +382,26 @@ if uci -q get uhttpd.main >/dev/null 2>&1; then
     /etc/init.d/uhttpd restart 2>/dev/null || true
     log "②已关闭 uhttpd rfc1918_filter（192.168.1.2 访问 403 修复）"
   }
+fi
+
+# ---------------- v9.9: 清理被剔除包的守护残留（r40 起固件剔除 lighttpd） ----------------
+# 覆盖升级只覆盖同名文件、不删除旧文件：旧固件里的 lighttpd（开机抢 IPv4:80，
+# 192.168.1.2 403 元凶）升级后仍残留并自启——"固件已剔除"但实机 80 仍被占。
+# 包内已不含 lighttpd init.d 而本机存在时：停服务→摘自启→删文件（幂等；r39 及更早包内含 lighttpd，不触发）。
+if ! tar -tzf "$TGZ" ./etc/init.d/lighttpd >/dev/null 2>&1; then
+  if [ -x /etc/init.d/lighttpd ]; then
+    /etc/init.d/lighttpd stop >/dev/null 2>&1
+    /etc/init.d/lighttpd disable >/dev/null 2>&1
+    rm -f /etc/init.d/lighttpd
+    rm -f /etc/rc.d/*lighttpd*
+    rm -f /etc/config/lighttpd
+    rm -rf /etc/lighttpd
+    rm -f /usr/sbin/lighttpd
+    rm -rf /usr/lib/lighttpd
+    log "v9.9: 已清理 lighttpd 残留（新固件不再携带；80 端口归还 uhttpd）"
+  else
+    log "v9.9: 新固件不含 lighttpd，本机亦无残留，无需处理"
+  fi
 fi
 
 # ---------------- v9.8: rootfs 在线扩容（r38 方案B，幂等） ----------------
