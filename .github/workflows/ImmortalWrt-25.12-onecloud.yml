@@ -114,6 +114,11 @@ jobs:
           mv -f target/linux/amlogic/meson8b/config-6.6 target/linux/amlogic/meson8b/config-6.12
           # r8修复1: 6.6→6.12 跨版本 kconfig 新符号预置（r8 实证 MDIO_BUS_MUX_MESON_GXL (NEW) 提示）
           grep -q "^CONFIG_MDIO_BUS_MUX_MESON_GXL=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_MDIO_BUS_MUX_MESON_GXL=m" >> target/linux/amlogic/meson8b/config-6.12
+          # r39: cpufreq governors —— 用户点名 schedutil，另补 ondemand/powersave/userspace；默认档保持 performance 不动
+          grep -q "^CONFIG_CPU_FREQ_GOV_SCHEDUTIL=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y" >> target/linux/amlogic/meson8b/config-6.12
+          grep -q "^CONFIG_CPU_FREQ_GOV_ONDEMAND=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_ONDEMAND=y" >> target/linux/amlogic/meson8b/config-6.12
+          grep -q "^CONFIG_CPU_FREQ_GOV_POWERSAVE=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_POWERSAVE=y" >> target/linux/amlogic/meson8b/config-6.12
+          grep -q "^CONFIG_CPU_FREQ_GOV_USERSPACE=" target/linux/amlogic/meson8b/config-6.12 || echo "CONFIG_CPU_FREQ_GOV_USERSPACE=y" >> target/linux/amlogic/meson8b/config-6.12
           # r8修复2: 移除 kconfig 未设符号中止开关（include/kernel-build.mk），其余 6.12 新符号按默认值静默取值，防 syncconfig 交互 EOF
           sed -i '/export FAIL_ON_UNCONFIGURED=1/d' include/kernel-build.mk
           # Kwrt 验证过的两个 6.12 冲突补丁

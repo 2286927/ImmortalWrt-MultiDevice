@@ -99,7 +99,7 @@ return baseclass.extend({
 			'定制',                E('a', { 'href': 'https://xhslink.cn/o/2GJiuLpYLGE', 'target': '_blank', 'style': 'text-decoration:underline' }, 'AI洲长'),
 			'构建日期',            '__BUILD_DATE__',
 			'编译地址',            E('a', { 'href': 'https://github.com/2286927/ImmortalWrt-MultiDevice', 'target': '_blank', 'style': 'text-decoration:underline' }, 'ImmortalWrt-MultiDevice'),
-			'升级通道',            [ E('a', { 'href': L.url('admin/system/ttyd'), 'target': '_blank', 'style': 'text-decoration:underline' }, '在线脚本'), E('span', { 'style': 'color:#888' }, '　终端预检: sh /tmp/oc-upgrade.sh --check；有新固件时执行: sh /tmp/oc-upgrade.sh --reboot') ],
+			'升级通道',            E('span', {}, [ E('a', { 'href': 'https://github.com/2286927/ImmortalWrt-MultiDevice/blob/main/scripts/onecloud/onecloud-online-upgrade.sh', 'target': '_blank', 'style': 'text-decoration:underline' }, '在线脚本'), E('span', { 'style': 'color:#888' }, '　终端预检: sh /tmp/oc-upgrade.sh --check；有新固件时执行: sh /tmp/oc-upgrade.sh --reboot') ] ),
 			_('Kernel Version'),   boardinfo.kernel,
 			_('Local Time'),       datestr,
 			_('Uptime'),           systeminfo.uptime ? '%t'.format(systeminfo.uptime) : null,
