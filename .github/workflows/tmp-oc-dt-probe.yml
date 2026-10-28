@@ -9,8 +9,8 @@ jobs:
         run: |
           set -e
           sudo apt-get update -qq && sudo apt-get install -y -qq device-tree-compiler xz-utils
-          TAG=$(gh release list --repo $GITHUB_REPOSITORY --limit 10 | head -1 | awk '{print $1}')
-          echo "=== 最新 Release: $TAG ==="
+          TAG="OneCloud_openwrt-25.12_26.10.27_19.30.58"
+          echo "=== 目标 Release: $TAG ==="
           gh release view "$TAG" --repo $GITHUB_REPOSITORY --json assets --jq '.assets[].name'
           gh release download "$TAG" --repo $GITHUB_REPOSITORY --pattern 'burn*' --clobber
           BURN=$(ls burn*.img.xz burn*.xz 2>/dev/null | head -1)
