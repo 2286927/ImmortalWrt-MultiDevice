@@ -25,6 +25,7 @@ jobs:
           sudo mkdir -p rfs-new/proc rfs-new/dev
           sudo mount --bind /proc rfs-new/proc || true
           sudo mount --bind /dev rfs-new/dev || true
+          sudo mkdir -p rfs-new/usr/local/bin && sudo cp qemu-arm-static rfs-new/usr/local/bin/
           sudo chroot rfs-new /usr/sbin/ubusd > ubusd-new.log 2>&1 &
           sleep 1
           sudo chroot rfs-new /usr/sbin/uhttpd -f -p 0.0.0.0:8080 -h /www -c /etc/config/uhttpd > uhttpd-new.log 2>&1 &
@@ -46,6 +47,7 @@ jobs:
           sudo mkdir -p rfs-old/proc rfs-old/dev
           sudo mount --bind /proc rfs-old/proc || true
           sudo mount --bind /dev rfs-old/dev || true
+          sudo mkdir -p rfs-old/usr/local/bin && sudo cp qemu-arm-static rfs-old/usr/local/bin/
           sudo chroot rfs-old /usr/sbin/ubusd > ubusd-old.log 2>&1 &
           sleep 1
           sudo chroot rfs-old /usr/sbin/uhttpd -f -p 0.0.0.0:8081 -h /www -c /etc/config/uhttpd > uhttpd-old.log 2>&1 &
