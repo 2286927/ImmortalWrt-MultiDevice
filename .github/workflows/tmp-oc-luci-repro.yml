@@ -1,0 +1,37 @@
+name: tmp-oc-luci-repro
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download rootfs and boot uhttpd under qemu
+        run: |
+          set -x
+          curl -sL --retry 3 -o rootfs.tar.gz "https://github.com/2286927/ImmortalWrt-MultiDevice/releases/download/OneCloud_openwrt-25.12_26.10.27_19.30.58/immortalwrt-amlogic-meson8b-thunder-onecloud-rootfs.tar.gz"
+          mkdir rfs && tar -xzf rootfs.tar.gz -C rfs
+          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static curl
+          sudo mount --bind /proc rfs/proc || true
+          sudo mount --bind /dev rfs/dev || true
+          sudo cp /usr/bin/qemu-arm-static rfs/usr/bin/
+          sudo chroot rfs /bin/sh -c "ls -la /www/index.html /www/cgi-bin/luci; ls -l /var/run 2>&1 | head -3" || true
+          sudo chroot rfs /usr/bin/qemu-arm-static /usr/sbin/ubusd > ubusd.log 2>&1 &
+          sleep 1
+          sudo chroot rfs /usr/bin/qemu-arm-static /usr/sbin/uhttpd -f -p 0.0.0.0:8080 -h /www -c /etc/config/uhttpd > uhttpd.log 2>&1 &
+          sleep 4
+          echo "===== uhttpd.log ====="; cat uhttpd.log || true
+          echo "===== GET / ====="
+          curl -s -o /tmp/idx.html -w "HTTP_CODE=%{http_code}\n" http://127.0.0.1:8080/ || true
+          head -c 300 /tmp/idx.html || true; echo
+          echo "===== GET /cgi-bin/luci/ ====="
+          curl -s -o /tmp/luci.html -D /tmp/luci.hdr -w "HTTP_CODE=%{http_code}\n" http://127.0.0.1:8080/cgi-bin/luci/ || true
+          cat /tmp/luci.hdr || true
+          echo "===== BODY (first 600B) ====="
+          head -c 600 /tmp/luci.html || true; echo
+          echo "===== GET /cgi-bin/luci (no slash) ====="
+          curl -s -o /tmp/luci2.html -w "HTTP_CODE=%{http_code}\n" http://127.0.0.1:8080/cgi-bin/luci || true
+          head -c 300 /tmp/luci2.html || true; echo
+          echo "===== uhttpd.log after requests ====="; cat uhttpd.log || true
