@@ -1,0 +1,50 @@
+name: oc-brand-wire3
+on:
+  push:
+    paths:
+      - .github/workflows/oc-brand-wire3.yml
+permissions:
+  contents: write
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: run with diagnostics
+        run: |
+          set +e
+          W=.github/workflows/ImmortalWrt-25.12-onecloud.yml
+          J=scripts/onecloud/10_system.js
+          LOG=.oc-brand-diag.txt
+          : > "$LOG"
+          echo "pwd=$(pwd)" >> "$LOG"
+          echo "target exists: W=$([ -f "$W" ] && echo yes || echo no) J=$([ -f "$J" ] && echo yes || echo no)" >> "$LOG"
+          printf '%s\n' '          bash $GITHUB_WORKSPACE/scripts/onecloud/brand-unify.sh $GITHUB_WORKSPACE/recipe' > /tmp/ins.txt
+          echo "printf rc=$? ins=$(cat /tmp/ins.txt)" >> "$LOG"
+          awk 'NR==FNR{ins=$0; next} {print} /git log -1/{print ins}' /tmp/ins.txt "$W" > /tmp/w.yml
+          echo "awk rc=$? outsize=$(wc -c < /tmp/w.yml)" >> "$LOG"
+          mv /tmp/w.yml "$W"
+          echo "mv rc=$?" >> "$LOG"
+          echo "grep_w=$(grep -c 'brand-unify.sh' "$W")" >> "$LOG"
+          sed -i 's|终端预检: sh /tmp/oc-upgrade.sh --check；有新固件时执行: sh /tmp/oc-upgrade.sh --reboot|检测: upgrade --check　升级: upgrade --reboot|' "$J"
+          echo "sed rc=$?" >> "$LOG"
+          echo "grep_j=$(grep -c '检测: upgrade --check' "$J")" >> "$LOG"
+          python3 -c "import yaml; yaml.safe_load(open('$W')); print('yml parse ok')" >> "$LOG" 2>&1
+          echo "yaml rc=$?" >> "$LOG"
+          git config user.name "ai-zhouchang-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git rm -q -f .github/workflows/oc-brand-wire.yml >> "$LOG" 2>&1
+          echo "rm old rc=$?" >> "$LOG"
+          git rm -q -f .github/workflows/oc-brand-wire3.yml >> "$LOG" 2>&1
+          echo "rm self rc=$?" >> "$LOG"
+          echo "--- status before add ---" >> "$LOG"
+          git status --porcelain >> "$LOG" 2>&1
+          git add -A >> "$LOG" 2>&1
+          echo "add rc=$?" >> "$LOG"
+          echo "--- status after add ---" >> "$LOG"
+          git status --porcelain >> "$LOG" 2>&1
+          git commit -m "feat(onecloud): 构建期接入品牌统一；概览页升级通道提示精简" >> "$LOG" 2>&1
+          echo "commit rc=$?" >> "$LOG"
+          git push origin HEAD:main >> "$LOG" 2>&1
+          echo "push rc=$?" >> "$LOG"
+          exit 0
