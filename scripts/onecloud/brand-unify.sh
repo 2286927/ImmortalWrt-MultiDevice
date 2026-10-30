@@ -63,7 +63,9 @@ if [ -n "$F" ] && [ -d "$F" ]; then
 fi
 
 # ---------- 3. 校验 ----------
-if grep -rIn --binary-files=without-match '莫小小\|moyulong\|Vomit\|洲·Cy\|1SjWwI' \
+# 注意：rmoyulong 是上游依赖仓库用户名（rmoyulong/AX6-Actions_Lede 等），含 moyulong 子串，
+# 属正常依赖来源，不可误判；故只匹配品牌水印形态（ssid=moyulong / ssid=Vomit）。
+if grep -rIn --binary-files=without-match '莫小小\|洲·Cy\|1SjWwI\|ssid=moyulong\|ssid=Vomit' \
      "$R/sh" "$R/ax6" "$R/onecloud" 2>/dev/null; then
   echo "::error::配方品牌水印清除失败"
   exit 1
