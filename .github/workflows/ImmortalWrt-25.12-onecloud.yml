@@ -289,13 +289,13 @@ jobs:
           DBEOF
           grep -q 'Interface' files/etc/config/dropbear && { echo "::error::dropbear 配置含 Interface 残留"; exit 1; } || true
           grep -q "PasswordAuth" files/etc/config/dropbear || { echo "::error::dropbear 配置注入失败"; exit 1; }
-          # r41: 出厂 root 密码真 hash——配方 shadow root hash 为空，Release 口径"默认密码 password"不成立
-          # （LuCI 空hash任意值放行、SSH dropbear -B 下空 hash 仅接受空串，password 全拒）；首启置真 hash，
-          # busybox passwd stdin 模式设备端零依赖；升级场景恢复的旧 shadow 也会被首启 uci-defaults 重置
+          # r42: 出厂空密码（用户指令 1029：OneCloud 25.12 全系出厂 root 无密码）——passwd -d root 置空 hash
+          # （LuCI 空hash任意值放行、dropbear -B 下 SSH 可空密码直连）；升级场景恢复的旧 shadow 也会被
+          # 首启 uci-defaults 重置为空密码
           cat > files/etc/uci-defaults/99-root-password << 'RPEOF'
           #!/bin/sh
-          # 出厂默认密码 password（与 Release body 口径一致；r41 修复 shadow root 空 hash）
-          printf 'password\npassword\n' | passwd root >/dev/null 2>&1
+          # 出厂空密码：passwd -d root（r42 用户指令；SSH 空密码直连，LuCI 任意密码可入）
+          passwd -d root >/dev/null 2>&1
           RPEOF
           dos2unix files/etc/uci-defaults/99-root-password
           chmod 755 files/etc/uci-defaults/99-root-password
@@ -418,7 +418,7 @@ jobs:
           tar -xzOf "$RFS_TAR" ./etc/diymo.sh 2>/dev/null | grep -q 'sleep 30' || { echo "::error::⑦diymo dockerd 延迟缺失"; exit 1; }
           echo "PASS⑦ diymo dockerd 延迟在位"
           if tar -xzOf "$RFS_TAR" ./www/luci-static/resources/view/status/include/10_system.js 2>/dev/null | grep -q '__BUILD_DATE__'; then echo "::error::⑧构建日期未注入"; exit 1; else echo "PASS⑧ 构建日期已注入"; fi
-          tar -xzOf "$RFS_TAR" ./etc/uci-defaults/99-root-password 2>/dev/null | grep -q 'passwd root' && echo "PASS⑨ 出厂密码脚本在位" || { echo "::error::⑨99-root-password 缺失"; exit 1; }
+          tar -xzOf "$RFS_TAR" ./etc/uci-defaults/99-root-password 2>/dev/null | grep -q 'passwd -d root' && echo "PASS⑨ 出厂空密码脚本在位" || { echo "::error::⑨99-root-password 缺失"; exit 1; }
 
       - name: 制作直刷包
         run: |
@@ -471,7 +471,7 @@ jobs:
             ========== 基本信息 ==========
             源码：immortalwrt
             分支：${{ env.REPO_BRANCH }}
-            默认密码：password
+            默认密码：空（root 无密码；SSH 空密码直连，LuCI 任意密码进入）
             默认地址：${{ env.OWRT_IP }}
           artifacts: "openwrt/outfile/*"
 
