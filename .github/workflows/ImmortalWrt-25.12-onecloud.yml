@@ -317,7 +317,7 @@ jobs:
           # --reboot 升级+10s 自动重启；优先在线拉最新 oc-upgrade.sh，失败回退出厂内置 v9）
           cp -f $GITHUB_WORKSPACE/scripts/onecloud/onecloud-online-upgrade.sh files/usr/lib/oc-upgrade.sh
                     mkdir -p files/usr/bin
-cat > files/usr/bin/upgrade << 'UPEOF'
+          cat > files/usr/bin/upgrade << 'UPEOF'
           #!/bin/sh
           # r44: OneCloud 出厂在线升级命令
           # 用法: upgrade --check   预检（只读不改机）
