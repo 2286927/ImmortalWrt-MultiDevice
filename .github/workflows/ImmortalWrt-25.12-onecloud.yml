@@ -313,6 +313,36 @@ jobs:
           chmod 755 files/etc/init.d/luci_socat files/etc/uci-defaults/luci-app-socat
           grep -q '^CONFIG_PACKAGE_socat=y' .config || echo 'CONFIG_PACKAGE_socat=y' >> .config
           test -s files/usr/lib/lua/luci/controller/socat.lua || { echo "::error::luci-app-socat 注入失败"; exit 1; }
+          # r44: 出厂即带在线升级命令 upgrade（CLI 化原两步 wget→sh 方案；--check 预检 /
+          # --reboot 升级+10s 自动重启；优先在线拉最新 oc-upgrade.sh，失败回退出厂内置 v9）
+          cp -f $GITHUB_WORKSPACE/scripts/onecloud/onecloud-online-upgrade.sh files/usr/lib/oc-upgrade.sh
+          cat > files/usr/bin/upgrade << 'UPEOF'
+          #!/bin/sh
+          # r44: OneCloud 出厂在线升级命令
+          # 用法: upgrade --check   预检（只读不改机）
+          #       upgrade --reboot  正式升级（写入完成约 10 秒自动重启）
+          SRC="https://raw.githubusercontent.com/2286927/ImmortalWrt-MultiDevice/main/scripts/onecloud/onecloud-online-upgrade.sh"
+          DST="/tmp/oc-upgrade.sh"
+          case "$1" in
+          \t--check) ;;
+          \t--reboot) ;;
+          \t*) echo "用法: upgrade --check | upgrade --reboot"; exit 1 ;;
+          esac
+          rm -f "$DST"
+          if wget -q -T 15 -O "$DST" "$SRC" && [ -s "$DST" ]; then
+          \techo "已拉取最新升级脚本"
+          elif [ -s /usr/lib/oc-upgrade.sh ]; then
+          \tcp /usr/lib/oc-upgrade.sh "$DST"
+          \techo "在线拉取失败，使用出厂内置升级脚本"
+          else
+          \techo "升级脚本不可用（在线拉取失败且无内置版本）"; exit 1
+          fi
+          exec sh "$DST" "$@"
+          UPEOF
+          dos2unix files/usr/lib/oc-upgrade.sh files/usr/bin/upgrade
+          chmod 755 files/usr/lib/oc-upgrade.sh files/usr/bin/upgrade
+          grep -q -- '--reboot' files/usr/lib/oc-upgrade.sh || { echo "::error::oc-upgrade.sh 内置版异常"; exit 1; }
+          test -s files/usr/bin/upgrade || { echo "::error::upgrade 命令注入失败"; exit 1; }
 
       - name: 下载编译环境
         working-directory: /workdir/openwrt
@@ -436,6 +466,9 @@ jobs:
           if ! tar -xzOf "$RFS_TAR" ./usr/lib/lua/luci/controller/socat.lua 2>/dev/null | grep -q 'entry'; then echo "::error::⑩luci-app-socat lua 注入缺失"; exit 1; fi
           if ! tar -tzf "$RFS_TAR" | grep -qE '^\./?usr/sbin/socat$'; then echo "::error::⑩socat CLI 缺失"; exit 1; fi
           echo "PASS⑩ luci-app-socat + socat CLI 在位"
+          tar -xzOf "$RFS_TAR" ./usr/bin/upgrade 2>/dev/null | grep -q 'oc-upgrade' || { echo "::error::⑪upgrade 命令缺失"; exit 1; }
+          tar -xzOf "$RFS_TAR" ./usr/lib/oc-upgrade.sh 2>/dev/null | grep -q -- '--reboot' || { echo "::error::⑪内置 oc-upgrade.sh 缺失"; exit 1; }
+          echo "PASS⑪ upgrade 升级命令在位（--check/--reboot）"
 
       - name: 制作直刷包
         run: |
