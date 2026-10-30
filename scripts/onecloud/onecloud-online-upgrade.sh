@@ -32,6 +32,12 @@
 #   12. v9.11（2026-10-28 实机实证）：--url 定向模式派生 TAG——原实现 TAG 仅在默认
 #       探测路径赋值，--url 模式下 TAG 为空 → boot 直连 URL 拼成 download//资产，
 #       直连+全镜像 404 → 升级链断裂（r39 定向升级 20:39 六通道 404 实锤，与 v9.10 互补）
+#   13. v9.12（2026-10-31 实机反馈）：无更新短路——原实现只有"探测→下载→校验"，缺少
+#       "当前版本 vs 目标版本"比较，导致本机已是最新时 upgrade --check 仍完整下载
+#       rootfs(约162MB)+boot(约10.5MB)。现在探测到目标后先比对：/etc/oc-version
+#       （构建期写入 yy.mm.dd_hh.mm.ss）精确命中即直接退出；无该文件时用
+#       DISTRIB_DESCRIPTION 里的构建日期做日粒度判定（仅 --check 短路，--reboot 不误挡）。
+#       新增 --force 跳过比较（强制重刷同版本）
 #   8. v8（2026-10-26）：--reboot 改 nohup 后台执行——原前台 sleep 10 会被 SSH 会话关闭
 #   9. v9.1（2026-10-28）：线刷暴露出厂缺陷修复——dropbear Interface 绑定删除（SSH 不监听根因）+ uhttpd rfc1918_filter 关闭（192.168.1.2 访问 403 根因）
 #      （SIGHUP）杀掉，导致 10 秒后不自动重启需手动 reboot；现在断开终端也能按时重启
@@ -60,10 +66,12 @@ ROOT_DEV="/dev/mmcblk1p2"
 REBOOT="no"
 
 CHECK_ONLY="no"
+FORCE="no"
 for a in "$@"; do
   case "$a" in
     --check) CHECK_ONLY="yes" ;;
     --reboot) REBOOT="yes" ;;
+    --force) FORCE="yes" ;;
     --url=*) OPT_URL="${a#--url=}" ;;
     --url) shift_next=1 ;;
     *) if [ "${shift_next:-0}" = "1" ]; then OPT_URL="$a"; shift_next=0; fi ;;
@@ -187,6 +195,38 @@ else
     log "TAG=$TAG"
   fi
 fi
+# ---------------- 版本比较（v9.12：无更新短路，杜绝无谓下载） ----------------
+# 2026-10-31 实机反馈：本机已是最新固件，upgrade --check 仍完整下载 rootfs+boot。
+# 根因：原实现只有"探测→下载→校验"，没有"当前版本 vs 目标版本"比较。
+# 版本标识优先级：
+#   ① /etc/oc-version（构建期写入 OWRT_DATE=yy.mm.dd_hh.mm.ss，精确到秒）→ 精确比较
+#   ② /etc/openwrt_release 的 DISTRIB_DESCRIPTION 构建日期（YYYY.MM.DD）→ 仅日粒度
+# 日粒度命中只在 --check 下短路；--reboot 继续（同一天可能多次构建，正式升级宁可
+# 多下一次包，也不误挡真实新版本）。--force 跳过本段比较。
+TAG_VER=$(echo "$URL_ROOTFS" | sed -n 's|.*/releases/download/\([^/]*\)/.*|\1|p')
+[ -n "$TAG_VER" ] || TAG_VER="${TAG:-}"
+NEW_VER=$(echo "$TAG_VER" | sed -n 's/.*_\([0-9][0-9]\.[0-9][0-9]\.[0-9][0-9]_[0-9][0-9]\.[0-9][0-9]\.[0-9][0-9]\)$/\1/p')
+CUR_VER=$(sed -e 's/[[:space:]]//g' /etc/oc-version 2>/dev/null)
+CUR_DAY=$(sed -n 's/.*(\([0-9][0-9][0-9][0-9]\.[0-9][0-9]\.[0-9][0-9]\)).*/\1/p' /etc/openwrt_release 2>/dev/null | head -n1)
+NEW_DAY=$(echo "$NEW_VER" | sed -n 's/^\([0-9][0-9]\)\.\([0-9][0-9]\)\.\([0-9][0-9]\)_.*/20\1.\2.\3/p')
+log "版本核对: 本机 ${CUR_VER:-未标记}${CUR_DAY:+（构建日 $CUR_DAY）} | 目标 ${NEW_VER:-未知}（TAG=${TAG_VER:-?}）"
+if [ "$FORCE" = "yes" ]; then
+  log "--force 指定：跳过版本比较，按目标版本完整执行"
+elif [ -n "$NEW_VER" ] && [ -n "$CUR_VER" ] && [ "$CUR_VER" = "$NEW_VER" ]; then
+  log "=========================================="
+  log "已是最新固件（本机 $CUR_VER == 目标 $NEW_VER），无需升级"
+  log "未下载任何包、未做任何修改。强制重刷同版本: sh $0 --force"
+  log "=========================================="
+  exit 0
+elif [ -n "$NEW_DAY" ] && [ -n "$CUR_DAY" ] && [ "$CUR_DAY" = "$NEW_DAY" ] && [ "$CHECK_ONLY" = "yes" ]; then
+  log "=========================================="
+  log "本机构建日 $CUR_DAY 与最新 Release 同日（$TAG_VER），判定无可用更新"
+  log "未下载任何包、未做任何修改（同日多次构建无法区分时刻——本机无 /etc/oc-version）"
+  log "确需核对/升级同日版本: sh $0 --check --force"
+  log "=========================================="
+  exit 0
+fi
+
 log "下载 rootfs 包: $URL_ROOTFS"
 _reuse_ok=0
 if [ -s "$WORK/rootfs.tar.gz" ] && tar -tzf "$WORK/rootfs.tar.gz" >/dev/null 2>&1; then
