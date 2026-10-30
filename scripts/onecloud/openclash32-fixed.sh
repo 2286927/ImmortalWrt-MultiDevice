@@ -77,3 +77,11 @@ echo "=== openclash 32位内核与 Geo 数据 ==="
 ls -l files/etc/openclash/core/ 2>/dev/null
 ls -l files/etc/openclash/*.dat files/etc/openclash/*.mmdb 2>/dev/null
 echo "openclash32-fixed 完成"
+
+# ---- 品牌统一（挂载点）----
+# 归档配方仓库 OneCloud_immortalwrt 只读且 workflow 锁定 RECIPE_REF，无法改仓库本身；
+# 此处在配方脚本（lean2.sh 写 DISTRIB_DESCRIPTION、cp ax6/banner）执行之后统一兜底，
+# 同时清理配方源与已落地的固件文件（/etc/openwrt_release、/etc/banner）。
+if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -f "$GITHUB_WORKSPACE/scripts/onecloud/brand-unify.sh" ]; then
+  bash "$GITHUB_WORKSPACE/scripts/onecloud/brand-unify.sh" "$GITHUB_WORKSPACE/recipe" "./package/base-files/files"
+fi
