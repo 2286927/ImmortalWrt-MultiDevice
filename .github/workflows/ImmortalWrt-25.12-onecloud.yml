@@ -466,7 +466,7 @@ jobs:
           if tar -xzOf "$RFS_TAR" ./www/luci-static/resources/view/status/include/10_system.js 2>/dev/null | grep -q '__BUILD_DATE__'; then echo "::error::⑧构建日期未注入"; exit 1; else echo "PASS⑧ 构建日期已注入"; fi
           tar -xzOf "$RFS_TAR" ./etc/uci-defaults/99-root-password 2>/dev/null | grep -q 'passwd -d root' && echo "PASS⑨ 出厂空密码脚本在位" || { echo "::error::⑨99-root-password 缺失"; exit 1; }
           if ! tar -xzOf "$RFS_TAR" ./usr/lib/lua/luci/controller/socat.lua 2>/dev/null | grep -q 'entry'; then echo "::error::⑩luci-app-socat lua 注入缺失"; exit 1; fi
-          if ! tar -tzf "$RFS_TAR" | grep -qE '^\./?usr/sbin/socat$'; then echo "::error::⑩socat CLI 缺失"; exit 1; fi
+          if ! tar -tzf "$RFS_TAR" | grep -qE '^\./?usr/(s?bin)/socat$'; then echo "::error::⑩socat CLI 缺失"; exit 1; fi
           echo "PASS⑩ luci-app-socat + socat CLI 在位"
           tar -xzOf "$RFS_TAR" ./usr/bin/upgrade 2>/dev/null | grep -q 'oc-upgrade' || { echo "::error::⑪upgrade 命令缺失"; exit 1; }
           tar -xzOf "$RFS_TAR" ./usr/lib/oc-upgrade.sh 2>/dev/null | grep -q -- '--reboot' || { echo "::error::⑪内置 oc-upgrade.sh 缺失"; exit 1; }
