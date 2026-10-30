@@ -299,6 +299,20 @@ jobs:
           RPEOF
           dos2unix files/etc/uci-defaults/99-root-password
           chmod 755 files/etc/uci-defaults/99-root-password
+          # r43: luci-app-socat 运行时注入——immortalwrt/官方 luci feed（25.12）均无此包，config 里的
+          # CONFIG_PACKAGE_luci-app-socat=y 是幽灵符号会被 defconfig 静默丢弃；lean 应用为纯 lua 脚本
+          # （controller/cbi/view），不进 buildroot 编译，直接落 files/（aria2 同款路径），socat CLI 由
+          # 真实符号 CONFIG_PACKAGE_socat=y（packages feed）提供
+          mkdir -p files/usr/lib/lua/luci/controller files/usr/lib/lua/luci/model/cbi/socat files/usr/lib/lua/luci/view/socat
+          for f in luasrc/controller/socat.lua luasrc/model/cbi/socat/index.lua luasrc/model/cbi/socat/config.lua luasrc/view/socat/status.htm luasrc/view/socat/list_status.htm; do
+            curl -fsSL "https://raw.githubusercontent.com/coolsnowwolf/luci/master/applications/luci-app-socat/$f" -o "files/usr/lib/lua/luci/${f#luasrc/}" || { echo "::error::luci-app-socat 源拉取失败: $f"; exit 1; }
+          done
+          curl -fsSL https://raw.githubusercontent.com/coolsnowwolf/luci/master/applications/luci-app-socat/root/etc/config/socat -o files/etc/config/socat
+          curl -fsSL https://raw.githubusercontent.com/coolsnowwolf/luci/master/applications/luci-app-socat/root/etc/init.d/luci_socat -o files/etc/init.d/luci_socat
+          curl -fsSL https://raw.githubusercontent.com/coolsnowwolf/luci/master/applications/luci-app-socat/root/etc/uci-defaults/luci-app-socat -o files/etc/uci-defaults/luci-app-socat
+          chmod 755 files/etc/init.d/luci_socat files/etc/uci-defaults/luci-app-socat
+          grep -q '^CONFIG_PACKAGE_socat=y' .config || echo 'CONFIG_PACKAGE_socat=y' >> .config
+          test -s files/usr/lib/lua/luci/controller/socat.lua || { echo "::error::luci-app-socat 注入失败"; exit 1; }
 
       - name: 下载编译环境
         working-directory: /workdir/openwrt
@@ -419,6 +433,9 @@ jobs:
           echo "PASS⑦ diymo dockerd 延迟在位"
           if tar -xzOf "$RFS_TAR" ./www/luci-static/resources/view/status/include/10_system.js 2>/dev/null | grep -q '__BUILD_DATE__'; then echo "::error::⑧构建日期未注入"; exit 1; else echo "PASS⑧ 构建日期已注入"; fi
           tar -xzOf "$RFS_TAR" ./etc/uci-defaults/99-root-password 2>/dev/null | grep -q 'passwd -d root' && echo "PASS⑨ 出厂空密码脚本在位" || { echo "::error::⑨99-root-password 缺失"; exit 1; }
+          if ! tar -xzOf "$RFS_TAR" ./usr/lib/lua/luci/controller/socat.lua 2>/dev/null | grep -q 'entry'; then echo "::error::⑩luci-app-socat lua 注入缺失"; exit 1; fi
+          if ! tar -tzf "$RFS_TAR" | grep -qE '^\./?usr/sbin/socat$'; then echo "::error::⑩socat CLI 缺失"; exit 1; fi
+          echo "PASS⑩ luci-app-socat + socat CLI 在位"
 
       - name: 制作直刷包
         run: |
