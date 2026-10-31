@@ -16,13 +16,20 @@
 #      （直接改挂载后的 rootfs 内容，含 os-release PRETTY_NAME；日期取 runner 本地时区）
 #   ⚠ p3 建分区起点与 count=1024 联动（FS 末端=p2 START 272MiB+1024MiB=1296MiB，
 #   首启脚本 P3_START=1301MiB，留 5MiB 余量）。改 count 必须同步首启脚本。
+# r42 离线自足：AmlImg / uboot.img 改为使用仓库内固化文件（tools/onecloud/），
+#   不再从 GitHub 实时下载；上游删库或改 release 不再影响本步骤。
 set -e
 
 sudo apt install -y android-sdk-libsparse-utils
-ver="v0.3.2"
-curl -L -o ./AmlImg https://github.com/rmoyulong/AmlImg/releases/download/$ver/AmlImg_${ver}_linux_amd64
+# 版本锚点：AmlImg v0.3.2（原 curl URL 变量，现记录于 tools/onecloud/README.md）
+# r42 离线自足：AmlImg / uboot.img 已固化入库（tools/onecloud/），不再从 GitHub 实时下载
+#   来源与校验值见 tools/onecloud/README.md
+DEP="${GITHUB_WORKSPACE:-$(cd "$(dirname "$0")/../.." && pwd)}/tools/onecloud"
+test -x "$DEP/AmlImg" || { echo "::error::缺少入库工具 $DEP/AmlImg（应为可执行文件）"; exit 1; }
+test -f "$DEP/uboot.img" || { echo "::error::缺少入库 uboot $DEP/uboot.img"; exit 1; }
+cp "$DEP/AmlImg" ./AmlImg
 chmod +x ./AmlImg
-curl -L -o ./uboot.img https://github.com/rmoyulong/u-boot-onecloud/releases/download/Onecloud_Uboot_23.12.24_18.15.09/eMMC.burn.img
+cp "$DEP/uboot.img" ./uboot.img
 ./AmlImg unpack ./uboot.img burn/
 
 gunzip openwrt/bin/targets/*/*/*.gz
