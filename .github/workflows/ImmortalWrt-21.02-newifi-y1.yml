@@ -742,7 +742,7 @@ jobs:
 
       - name: 上传编译日志
         if: failure()
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: compile-log-${{ env.DEVICE_MODEL }}
           path: |
@@ -855,14 +855,14 @@ jobs:
           ls -l "$FIRMWARE"/autoupdate-*
 
       - name: 上传 bin
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7.0.2
         if: steps.compile.outputs.status == 'success' && github.event_name == 'workflow_dispatch' && env.UPLOAD_BIN_DIR == 'true'
         with:
           name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: openwrt/bin
 
       - name: 上传 packages
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7.0.2
         if: steps.compile.outputs.status == 'success' && github.event_name == 'workflow_dispatch' && env.UPLOAD_PACKAGES_DIR == 'true'
         with:
           name: OpenWrt_packages${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
