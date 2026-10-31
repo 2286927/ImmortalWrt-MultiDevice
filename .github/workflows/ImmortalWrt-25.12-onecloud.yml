@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: 清理服务器空间(Ubuntu)
-        uses: rmoyulong/free-disk-space@main
+        uses: rmoyulong/free-disk-space@36e9a5af4eddb91fc11aec4c6f6f79b3cc0cb523  # main @ 2026-09-17
         with:
           preinstalled-runtimes: true
           android: true
@@ -61,7 +61,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout 主仓库
-        uses: actions/checkout@main
+        uses: actions/checkout@v7.0.1
 
       - name: 初始化编译环境
         env:
@@ -153,7 +153,7 @@ jobs:
           echo "COMMIT_HASH=$(git rev-parse HEAD)" >> $GITHUB_ENV
 
       - name: 启动缓存[第二次起生效]
-        uses: rmoyulong/cachewrtbuild@main
+        uses: rmoyulong/cachewrtbuild@b729f807837dbc3455d02fd35192660d9b662121  # main @ 2026-05-10
         with:
           ccache: 'true'
           prefix: ${{ github.workspace }}/openwrt
@@ -505,7 +505,7 @@ jobs:
           ls -lh $PWD
 
       - name: 上传 artifacts
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: onecloud-${{ env.REPO_BRANCH }}-${{ env.OWRT_DATE }}
           path: openwrt/outfile/*
