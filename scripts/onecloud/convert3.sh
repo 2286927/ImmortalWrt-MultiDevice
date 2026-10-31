@@ -25,7 +25,7 @@ sudo apt install -y android-sdk-libsparse-utils
 # r42 离线自足：AmlImg / uboot.img 已固化入库（tools/onecloud/），不再从 GitHub 实时下载
 #   来源与校验值见 tools/onecloud/README.md
 DEP="${GITHUB_WORKSPACE:-$(cd "$(dirname "$0")/../.." && pwd)}/tools/onecloud"
-test -x "$DEP/AmlImg" || { echo "::error::缺少入库工具 $DEP/AmlImg（应为可执行文件）"; exit 1; }
+test -f "$DEP/AmlImg" || { echo "::error::缺少入库工具 $DEP/AmlImg"; exit 1; }
 test -f "$DEP/uboot.img" || { echo "::error::缺少入库 uboot $DEP/uboot.img"; exit 1; }
 cp "$DEP/AmlImg" ./AmlImg
 chmod +x ./AmlImg
