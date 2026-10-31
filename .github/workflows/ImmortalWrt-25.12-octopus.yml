@@ -739,7 +739,7 @@ jobs:
 
       - name: 上传编译日志
         if: failure()
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: compile-log-${{ env.DEVICE_MODEL }}
           path: |
@@ -844,7 +844,7 @@ jobs:
 
       - name: 上传 armsr rootfs 产物（供 s912 直刷打包）
         if: steps.compile.outputs.status == 'success'
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: octopus-rootfs-25.12
           # 25.12 树会同时产出 immortalwrt-...-rootfs.tar.gz 与 immortalwrt-...-targz-rootfs.tar.gz（同内容双命名），
@@ -852,14 +852,14 @@ jobs:
           path: openwrt/bin/targets/armsr/armv8/*armv8-generic-rootfs.tar.gz
 
       - name: 上传 bin
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7.0.2
         if: steps.compile.outputs.status == 'success' && github.event_name == 'workflow_dispatch' && env.UPLOAD_BIN_DIR == 'true'
         with:
           name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: openwrt/bin
 
       - name: 上传 packages
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7.0.2
         if: steps.compile.outputs.status == 'success' && github.event_name == 'workflow_dispatch' && env.UPLOAD_PACKAGES_DIR == 'true'
         with:
           name: OpenWrt_packages${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -1099,13 +1099,13 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 下载 armsr rootfs 产物
-        uses: actions/download-artifact@main
+        uses: actions/download-artifact@v8.0.2
         with:
           name: octopus-rootfs-25.12
           path: openwrt/bin/targets/armsr/armv8
 
       - name: 打包 s912 直刷镜像（flippy）
-        uses: ophub/flippy-openwrt-actions@main
+        uses: ophub/flippy-openwrt-actions@1bdd6e6d51f2e4764b2e8d826d0722bb103d8079  # main @ 2026-10-17
         env:
           OPENWRT_ARMVIRT: openwrt/bin/targets/*/*/*.tar.gz
           PACKAGE_SOC: s912
