@@ -147,6 +147,19 @@ config dropbear
 DROPBEAR_EOF
 echo ">>> Dropbear 出厂配置已固化（22 端口/全接口/密码验证/root 密码登录）"
 
+# ── 1g. luci-app-socat 修复（保存即生效 + stop 竞态 + 延迟重载防 502）──
+# 背景：luci_socat 未注册 procd、无 config.change 触发器；LuCI 侧保存后
+#   不调 restart，只有开机 S99luci_socat 才会拉起 → 新规则长期显示 X，
+#   必须重启设备才变 ✓。另有 stop 竞态（kill 异步 + 立刻 rm -rf）导致
+#   restart 时 bind EADDRINUSE。
+SOCAT_FIX="$GITHUB_WORKSPACE/scripts/common/patch-luci-app-socat.sh"
+[ -f "$SOCAT_FIX" ] || SOCAT_FIX="$MYDIR/../common/patch-luci-app-socat.sh"
+if [ -f "$SOCAT_FIX" ]; then
+    bash "$SOCAT_FIX" || { echo "❌ socat 补丁失败，中止编译"; exit 1; }
+else
+    echo "⚠️  未找到 patch-luci-app-socat.sh，跳过 socat 修复"
+fi
+
 # ── 2. 第三方软件包导入 + 官方同名清理（第三方优先） ─────────────────────────
 SYNC_SH="$GITHUB_WORKSPACE/scripts/common/package-sync.sh"
 [ -f "$SYNC_SH" ] || SYNC_SH="$MYDIR/../common/package-sync.sh"
