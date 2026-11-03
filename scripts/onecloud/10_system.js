@@ -98,7 +98,7 @@ return baseclass.extend({
 			_('Firmware Version'), (L.isObject(boardinfo.release) ? boardinfo.release.description + ' / ' : '') + (luciversion || ''),
 			'定制',                E('a', { 'href': 'https://xhslink.cn/o/2GJiuLpYLGE', 'target': '_blank', 'style': 'text-decoration:underline' }, 'AI洲长'),
 			'构建日期',            '__BUILD_DATE__',
-			'编译地址',            E('a', { 'href': 'https://github.com/2286927/ImmortalWrt-MultiDevice', 'target': '_blank', 'style': 'text-decoration:underline' }, 'ImmortalWrt-MultiDevice'),
+			// '编译地址',            E('a', { 'href': 'https://github.com/2286927/ImmortalWrt-MultiDevice', 'target': '_blank', 'style': 'text-decoration:underline' }, 'ImmortalWrt-MultiDevice'),
 			'升级通道',            E('span', {}, [ '在线脚本', E('span', { 'style': 'color:#888' }, '　终端预检: upgrade --check　升级: upgrade --reboot') ] ),
 			_('Kernel Version'),   boardinfo.kernel,
 			_('Local Time'),       datestr,
