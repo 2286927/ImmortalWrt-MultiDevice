@@ -514,6 +514,23 @@ jobs:
             exit 1
           }
 
+          # 21.02 的 luci-app-socat 自带 /etc/config/socat 与 /etc/init.d/socat，
+          # 而 socat 包也无条件安装这两个同名文件，opkg 报 check_data_file_clashes
+          # 直接拒绝安装 luci-app-socat（连带依赖它的 luci-i18n-socat-zh-cn），
+          # 最终 package/install 返回 Error 255、整个编译失败。
+          # 修法：让 socat 只提供 /usr/bin/socat，config/init.d 交给 luci-app-socat
+          # （21.02 的 LuCI 界面写的是 protocol/listen_port/dest_ip 自有格式，必须用它自己的脚本）。
+          SOCAT_MK="feeds/packages/net/socat/Makefile"
+          if [ -f "$SOCAT_MK" ]; then
+            sed -i '/^define Package\/socat\/conffiles$/,/^endef$/d' "$SOCAT_MK"
+            sed -i '/INSTALL_CONF.*files\/socat\.config/d; /INSTALL_BIN.*files\/socat\.init/d' "$SOCAT_MK"
+            sed -i '/INSTALL_DIR.*\$(1)\/etc\/config$/d; /INSTALL_DIR.*\$(1)\/etc\/init\.d$/d' "$SOCAT_MK"
+            echo ">>> socat Makefile 已 patch（只装二进制，config/init.d 由 luci-app-socat 提供）"
+            sed -n '/define Package\/socat\/install/,/^endef/p' "$SOCAT_MK"
+          else
+            echo ">>> 警告：未找到 $SOCAT_MK，跳过 socat 冲突 patch"
+          fi
+
       - name: 安装iStore商店
         if: (github.event.inputs.istore == 'true')
         run: |
