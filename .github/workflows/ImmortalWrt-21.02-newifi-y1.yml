@@ -706,10 +706,21 @@ jobs:
           if [ $RET -ne 0 ]; then
             echo "❌ 编译失败！"
             # 并行 make 会吞掉真实错误（-j 下 OpenWrt 只给一句 build failed，
-            # 具体是哪个包失败、哪条命令报错都不打印），失败后改用单线程重跑末段，
-            # 把真实报错打进日志和 artifact，避免下次排障还得靠猜。
-            echo "===== 诊断：-j1 重跑 package/install 以暴露真实错误 ====="
-            make -j1 package/install 2>&1 | tee -a build.log | tail -60 || true
+            # 具体是哪个包失败、哪条命令报错都不打印）。失败后用 -j1 + V=s 重跑，
+            # V=s 会逐条打印执行的命令，即使报错被聚合层吞掉也能看到最后卡在哪一步。
+            echo "===== 诊断开始 ====="
+            echo "--- 内存 ---"; free -h || true
+            echo "--- OOM 检查（dmesg 尾部） ---"; dmesg 2>/dev/null | tail -20 || true
+            echo "--- build.log 尾部 120 行 ---"; tail -120 build.log || true
+            echo "--- build.log 错误行 ---"
+            grep -inE "error|cannot|conflict|Collected errors|No such file|not found|Killed|Segmentation" build.log | tail -60 || true
+            echo "--- 手动 -j1 V=s 重跑 package/install ---"
+            make -j1 package/install V=s 2>&1 | tee -a build.log | tail -150 || true
+            echo "--- 重跑后 build.log 错误行 ---"
+            grep -inE "error|cannot|conflict|Collected errors|No such file|not found|Stop\." build.log | tail -40 || true
+            echo "--- tmp 状态 ---"
+            ls -la tmp/.build tmp/opkg_install_list 2>&1 || true
+            wc -c tmp/opkg_install_list 2>&1 || true
             echo "===== 诊断结束 ====="
             exit 1
           fi
