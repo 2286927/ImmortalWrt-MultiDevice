@@ -705,6 +705,12 @@ jobs:
           kill $monitor_pid || true
           if [ $RET -ne 0 ]; then
             echo "❌ 编译失败！"
+            # 并行 make 会吞掉真实错误（-j 下 OpenWrt 只给一句 build failed，
+            # 具体是哪个包失败、哪条命令报错都不打印），失败后改用单线程重跑末段，
+            # 把真实报错打进日志和 artifact，避免下次排障还得靠猜。
+            echo "===== 诊断：-j1 重跑 package/install 以暴露真实错误 ====="
+            make -j1 package/install 2>&1 | tee -a build.log | tail -60 || true
+            echo "===== 诊断结束 ====="
             exit 1
           fi
           # -------------------------
