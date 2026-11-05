@@ -229,7 +229,7 @@ o.default = "1"
 o.rmempty = false
 
 m.on_after_commit = function(self)
-	luci.sys.call("nohup sh -c '[ -f /tmp/.socat_restart_pending ] && exit 0; touch /tmp/.socat_restart_pending; sleep 3; /etc/init.d/luci_socat restart; rm -f /tmp/.socat_restart_pending' >/dev/null 2>&1 &")
+	luci.sys.call("setsid sh -c '[ -f /tmp/.socat_restart_pending ] && exit 0; touch /tmp/.socat_restart_pending; sleep 3; /etc/init.d/luci_socat restart; rm -f /tmp/.socat_restart_pending' >/dev/null 2>&1 &")
 end
 
 return m
@@ -270,7 +270,7 @@ end
 function s.remove(e, t)
 	e.map.proceed = true
 	e.map:del(t)
-	luci.sys.call("nohup sh -c '[ -f /tmp/.socat_restart_pending ] && exit 0; touch /tmp/.socat_restart_pending; sleep 3; /etc/init.d/luci_socat restart; rm -f /tmp/.socat_restart_pending' >/dev/null 2>&1 &")
+	luci.sys.call("setsid sh -c '[ -f /tmp/.socat_restart_pending ] && exit 0; touch /tmp/.socat_restart_pending; sleep 3; /etc/init.d/luci_socat restart; rm -f /tmp/.socat_restart_pending' >/dev/null 2>&1 &")
 	luci.http.redirect(d.build_url("admin", "network", "socat"))
 end
 
@@ -316,7 +316,7 @@ o.rmempty = false
 m:append(Template("socat/list_status"))
 
 m.on_after_commit = function(self)
-	luci.sys.call("nohup sh -c '[ -f /tmp/.socat_restart_pending ] && exit 0; touch /tmp/.socat_restart_pending; sleep 3; /etc/init.d/luci_socat restart; rm -f /tmp/.socat_restart_pending' >/dev/null 2>&1 &")
+	luci.sys.call("setsid sh -c '[ -f /tmp/.socat_restart_pending ] && exit 0; touch /tmp/.socat_restart_pending; sleep 3; /etc/init.d/luci_socat restart; rm -f /tmp/.socat_restart_pending' >/dev/null 2>&1 &")
 end
 
 return m
