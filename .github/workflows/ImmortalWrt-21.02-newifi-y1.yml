@@ -527,8 +527,22 @@ jobs:
             sed -i '/INSTALL_DIR.*\$(1)\/etc\/config$/d; /INSTALL_DIR.*\$(1)\/etc\/init\.d$/d' "$SOCAT_MK"
             echo ">>> socat Makefile 已 patch（只装二进制，config/init.d 由 luci-app-socat 提供）"
             sed -n '/define Package\/socat\/install/,/^endef/p' "$SOCAT_MK"
+            # 断言 1：install 段不得再装 /etc/config/socat 或 /etc/init.d/socat
+            if grep -qE 'INSTALL_(CONF|BIN).*files/socat\.(config|init)' "$SOCAT_MK"; then
+              echo "❌ socat Makefile patch 未生效：install 段仍装 config/init.d，opkg 必然 file_clashes，中止编译"
+              grep -nE 'INSTALL_(CONF|BIN|DIR).*etc/(config|init\.d)|files/socat\.(config|init)' "$SOCAT_MK" || true
+              exit 1
+            fi
+            # 断言 2：patch 不得误删二进制安装（否则 socat 命令消失）
+            if ! grep -q 'usr/bin/socat' "$SOCAT_MK"; then
+              echo "❌ socat Makefile patch 破坏了 install 段：找不到 /usr/bin/socat，中止编译"
+              sed -n '/define Package\/socat\/install/,/^endef/p' "$SOCAT_MK" || true
+              exit 1
+            fi
+            echo "✅ socat Makefile patch 断言通过（install 段仅保留 /usr/bin/socat）"
           else
-            echo ">>> 警告：未找到 $SOCAT_MK，跳过 socat 冲突 patch"
+            echo "❌ 未找到 $SOCAT_MK，feeds 结构异常，无法修复 socat 文件冲突，中止编译"
+            exit 1
           fi
 
       - name: 安装iStore商店
@@ -867,7 +881,7 @@ jobs:
         if: steps.compile.outputs.status == 'success'
         run: |
           set -e
-          PREFIX="autoupdate-NEWIFI-Y1-21.02"
+          PREFIX="${AUTOUPDATE_PREFIX:?env AUTOUPDATE_PREFIX 未定义}"
           SYSUPGRADE_FILE=$(ls "$FIRMWARE"/*sysupgrade*.itb 2>/dev/null | head -n 1 || true)
           [ -z "$SYSUPGRADE_FILE" ] && SYSUPGRADE_FILE=$(ls "$FIRMWARE"/*sysupgrade* 2>/dev/null | head -n 1 || true)
           if [ -z "$SYSUPGRADE_FILE" ]; then
