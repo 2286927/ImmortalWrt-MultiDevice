@@ -175,14 +175,14 @@ fi
 # 多设备仓库：AUTOUPDATE_PREFIX 由各 workflow env 注入（缺省保持 v2.1 RAX3000M 行为）
 AUTOUPDATE_PREFIX="${AUTOUPDATE_PREFIX:-autoupdate-RAX3000M-24.10}"
 
-AUTOUPTATE_SRC="$MYDIR/../common/autoupdate.sh"
+AUTOUPDATE_SRC="$MYDIR/../common/autoupdate.sh"
 
-if [ -f "$AUTOUPTATE_SRC" ]; then
+if [ -f "$AUTOUPDATE_SRC" ]; then
     mkdir -p files/usr/bin files/etc/crontabs files/etc/config
-    install -m 755 "$AUTOUPTATE_SRC" files/usr/bin/autoupdate
-    ln -sf autoupdate files/usr/bin/rax-autoupdate
+    install -m 755 "$AUTOUPDATE_SRC" files/usr/bin/autoupdate
 
-    GH_BASE="https://github.com/${GITHUB_REPOSITORY:-OWNER/REPO}/releases/latest/download"
+    # 固定 tag autoupdate（多设备资产共存，发版后由 workflow 同步，URL 永不失效）
+    GH_BASE="https://github.com/${GITHUB_REPOSITORY:-OWNER/REPO}/releases/download/autoupdate"
 
     cat > files/etc/config/autoupdate <<EOF
 config main 'main'
