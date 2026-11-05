@@ -601,7 +601,8 @@ jobs:
             fi
           done
           echo ">>> 内核瘦身项残留：${TUNE_LEAK} 个"
-          for sym in CONFIG_PACKAGE_kmod-sched-fq-pie CONFIG_PACKAGE_kmod-tcp-bbr \
+          for sym in CONFIG_PACKAGE_kmod-sched-fq-pie CONFIG_PACKAGE_kmod-sched-pie \
+                     CONFIG_PACKAGE_kmod-tcp-bbr CONFIG_PACKAGE_kmod-ifb \
                      CONFIG_PACKAGE_zram-swap CONFIG_PACKAGE_kmod-zram \
                      CONFIG_PACKAGE_fstrim CONFIG_PACKAGE_kmod-netlink-diag; do
             grep -q "^${sym}=y" .config || echo "::warning::${sym} 未入选，对应调优项将不生效"
