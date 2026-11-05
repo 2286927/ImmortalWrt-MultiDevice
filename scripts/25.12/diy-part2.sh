@@ -211,11 +211,14 @@ else
 fi
 
 # ── 2b. Filogic / RAX3000M 出厂性能调优（仅 cmcc_rax3000m 生效）─────
-# 优化方法来自对 mzwrt-25-12 的分析，落到固件运行时：
-#   ① 队列/拥塞：fq_pie + BBR（MT7981 是 Cortex-A53，无 AES-NI，加密路径已在 config 侧改为 ChaCha 优先）
-#   ② 大带宽时延积：TCP 收发缓冲上限 8MB，空闲后不回落慢启动，跨境单流可跑满千兆
+# 参数已逆向核对 mzwrt-25-12 已发布固件（v25.12.6-20261105112318）的真实产物：
+#   /etc/sysctl.d/98-mzwrt.conf、/etc/uci-defaults/99-MzWrt-settings、
+#   /etc/mzwrt/openclash-tuning.txt、/etc/modules.d/{sched-fq-pie,tcp-bbr}
+# 落到固件运行时：
+#   ① 队列/拥塞：fq_pie + BBR（MT7981 是 Cortex-A53，加密路径已在 config 侧改为 ChaCha 优先）
+#   ② 大带宽时延积：TCP 收发缓冲上限 8MB，默认 256KB，空闲后不回落慢启动
 #   ③ 硬件转发：flow offloading 软+硬（MT7981 硬件 NAT）、packet steering 双核分流
-#   ④ 内存：ZRAM 兜底、conntrack 收敛到 32768、min_free_kbytes 留回收余量
+#   ④ 内存：ZRAM 兜底、conntrack 收敛到 32768、min_free_kbytes 24MB 留回收余量
 #   ⑤ 无线：国家码 CN，放开 5G 全信道与功率上限（默认 world 会压制）
 if [[ "${DEVICE_MODEL:-}" == "cmcc_rax3000m" ]]; then
     echo ">>> 注入 Filogic(MT7981) 出厂调优 ..."
@@ -223,6 +226,7 @@ if [[ "${DEVICE_MODEL:-}" == "cmcc_rax3000m" ]]; then
              files/etc/filogic files/usr/sbin
 
     # ① 启动早期加载调度/拥塞模块，保证 sysctl 写入时目标键已存在
+    #    （kmod-sched-fq-pie / kmod-tcp-bbr 包本身也带 modules.d 文件，此处为兜底）
     cat > files/etc/modules.d/99-filogic-tune <<'EOF'
 sch_fq_pie
 tcp_bbr
@@ -231,15 +235,19 @@ EOF
     # ② 运行时内核参数（/etc/init.d/sysctl 每次启动应用）
     cat > files/etc/sysctl.d/99-filogic-tune.conf <<'EOF'
 # ===== MediaTek Filogic (MT7981) 出厂调优 =====
+# 数值对齐 mzwrt-25-12 的 /etc/sysctl.d/98-mzwrt.conf
+
 # ── 队列与拥塞控制：BBR 高吞吐低延迟，fq_pie 抗 bufferbloat ──
 net.core.default_qdisc = fq_pie
 net.ipv4.tcp_congestion_control = bbr
 
-# ── 大带宽时延积：单流可跑满千兆跨境链路（8MB 上限）──
+# ── 大带宽时延积：单流可跑满千兆跨境链路（8MB 上限，默认 256KB）──
 net.core.rmem_max = 8388608
 net.core.wmem_max = 8388608
-net.ipv4.tcp_rmem = 4096 87380 8388608
-net.ipv4.tcp_wmem = 4096 65536 8388608
+net.core.rmem_default = 262144
+net.core.wmem_default = 262144
+net.ipv4.tcp_rmem = 4096 262144 8388608
+net.ipv4.tcp_wmem = 4096 16384 8388608
 
 # ── 空闲后不回落慢启动，避免突发流量重新爬坡 ──
 net.ipv4.tcp_slow_start_after_idle = 0
@@ -247,29 +255,75 @@ net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_mtu_probing = 1
 # ── TCP Fast Open（客户端 + 服务端）──
 net.ipv4.tcp_fastopen = 3
+# ── 不复用旧连接的拥塞指标，路径变化后不带错误 cwnd 起步 ──
+net.ipv4.tcp_no_metrics_save = 1
+# ── TIME_WAIT 阶段丢弃畸形包，抗扫描/抗误杀 ──
+net.ipv4.tcp_rfc1337 = 1
+
+# ── 连接清理（长期挂机场景及时回收孤儿连接）──
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_orphan_retries = 2
+net.ipv4.tcp_max_orphans = 4096
+
+# ── Keepalive：300s 探测，及时回收死连接 ──
+net.ipv4.tcp_keepalive_time = 300
+net.ipv4.tcp_keepalive_intvl = 15
+net.ipv4.tcp_keepalive_probes = 5
+
+# ── 网络队列（双核 A53，提高 backlog/budget 减少软中断丢包）──
+net.core.netdev_max_backlog = 4096
+net.core.netdev_budget = 600
+net.core.netdev_budget_usecs = 8000
 
 # ── 连接跟踪：512MB 内存下 32768 足够，且不会打爆 slab ──
 net.netfilter.nf_conntrack_max = 32768
-net.netfilter.nf_conntrack_tcp_timeout_established = 3600
+net.netfilter.nf_conntrack_acct = 0
+net.netfilter.nf_conntrack_checksum = 0
+net.netfilter.nf_conntrack_tcp_timeout_established = 600
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 30
+net.netfilter.nf_conntrack_udp_timeout = 30
+net.netfilter.nf_conntrack_udp_timeout_stream = 120
 
-# ── 内存水位：给 Clash / AdGuardHome 留回收余量，降低 OOM 概率 ──
-vm.min_free_kbytes = 8192
+# ── 内存管理（512MB 长期挂机 + ZRAM）──
+vm.swappiness = 10
+vm.vfs_cache_pressure = 80
+vm.min_free_kbytes = 24576
+
+# ── 文件描述符与 BPF（OpenClash 多连接 / 规则匹配）──
+fs.file-max = 51200
+net.core.bpf_jit_enable = 1
+net.core.bpf_jit_kallsyms = 0
+
+# ── IGMP（IPTV / 组播）──
+net.ipv4.igmp_max_memberships = 100
 EOF
 
     # ③ 首次启动一次性 UCI 默认值（执行后由系统自动删除）
     cat > files/etc/uci-defaults/99-filogic-tune <<'EOF'
 #!/bin/sh
-# 首次启动生效：硬件转发卸载 + 双核分流 + 无线国家码 CN
+# 首次启动生效：硬件转发卸载 + 双核分流 + 无线国家码 CN + 日志收敛
+
+# 软/硬 flow offloading（MT7981 硬件 NAT；被 Clash 接管的流不进卸载）
 [ -f /etc/config/firewall ] && {
 	uci -q set firewall.@defaults[0].flow_offloading='1'
 	uci -q set firewall.@defaults[0].flow_offloading_hw='1'
 	uci -q commit firewall
 }
 
-[ -f /etc/config/network ] && {
-	uci -q set network.globals.packet_steering='1'
-	uci -q commit network
-}
+# packet steering：双核分流，降低单核打满的时延毛刺
+# 兼容命名 section（network.globals）与匿名 section（network.@globals[0]）
+if [ -f /etc/config/network ]; then
+	if uci -q get network.globals >/dev/null 2>&1; then
+		uci -q set network.globals.packet_steering='1'
+		uci -q commit network
+	elif uci -q get network.@globals[0] >/dev/null 2>&1; then
+		uci -q set network.@globals[0].packet_steering='1'
+		uci -q commit network
+	fi
+	# S25 时该服务已跑过，首次启动需显式 reload 才生效
+	[ -x /etc/init.d/packet_steering ] && /etc/init.d/packet_steering reload >/dev/null 2>&1
+fi
 
 # 首次启动时 /etc/config/wireless 可能尚未生成，先让 wifi 生成默认配置再改国家码
 [ -f /etc/config/wireless ] || wifi config >/dev/null 2>&1
@@ -279,6 +333,18 @@ if [ -f /etc/config/wireless ]; then
 	done
 	uci -q commit wireless
 fi
+
+# 日志收敛：减少 eMMC 写入量（长期挂机）
+[ -f /etc/config/system ] && {
+	uci -q set system.@system[0].log_level='6'
+	uci -q set system.@system[0].log_size='64'
+	uci -q commit system
+}
+
+# sysctl 在 S11 执行，早于 nf_conntrack 加载；此处兜底重放一次
+[ -f /etc/sysctl.d/99-filogic-tune.conf ] && \
+	sysctl -e -p /etc/sysctl.d/99-filogic-tune.conf >/dev/null 2>&1
+
 exit 0
 EOF
     chmod 755 files/etc/uci-defaults/99-filogic-tune
@@ -289,6 +355,7 @@ MediaTek Filogic (MT7981 / CMCC RAX3000M) 出厂调优说明
 =======================================================
 
 本固件出厂即启用以下优化，无需手动配置。
+参数与 mzwrt-25-12 已发布固件核对一致（/etc/sysctl.d/98-mzwrt.conf）。
 
 一、国内直连：低延迟 · 高速率
   1. 软件 + 硬件 Flow Offloading（MT7981 硬件 NAT 转发）
@@ -296,16 +363,19 @@ MediaTek Filogic (MT7981 / CMCC RAX3000M) 出厂调优说明
   3. fq_pie 队列 + BBR 拥塞控制
 
 二、跨境代理：OpenClash 吞吐
-  1. TCP 收发缓冲上限 8MB，空闲后不回落慢启动（tcp_slow_start_after_idle=0）
-  2. MTU 黑洞探测 + TCP Fast Open
+  1. TCP 收发缓冲上限 8MB、默认 256KB，空闲后不回落慢启动
+  2. MTU 黑洞探测 + TCP Fast Open + 不复用旧连接拥塞指标
   3. 推荐 OpenClash 组合：Rule 模式 / 大陆分流 DIRECT / Fake-IP + TUN / 协议栈 System
      说明：只有协议栈选 System，流量才走本机内核的 BBR 与大窗口；选 gVisor/Mixed 会绕开。
+  4. 不要为了 Clash 长期关闭硬件卸载（国内会明显变慢），也不要日常用 Global 模式。
 
 三、内存与稳定性（512MB 长期挂机画像）
-  1. ZRAM 压缩内存兜底
-  2. conntrack 上限 32768，established 超时 3600s
-  3. vm.min_free_kbytes = 8192，降低 Clash + AdGuardHome 同开时的 OOM 概率
-  4. 内核已裁掉 memcg / io_uring / MPTCP / coredump / DEBUG_FS / MAGIC_SYSRQ
+  1. ZRAM 压缩内存兜底（默认约 256MB swap）
+  2. conntrack 上限 32768，established 超时 600s，关闭 acct/checksum 省 CPU
+  3. vm.min_free_kbytes = 24MB，降低 Clash + AdGuardHome 同开时的 OOM 概率
+  4. vm.swappiness = 10、vfs_cache_pressure = 80，优先保留 inode/dentry 缓存
+  5. fs.file-max = 51200，BPF JIT 开启但关闭 kallsyms
+  6. 内核已裁掉 memcg / io_uring / MPTCP / coredump / DEBUG_FS / MAGIC_SYSRQ
 
 四、无线
   1. 默认国家码 CN：放开 5G 全信道与发射功率上限
@@ -323,23 +393,43 @@ EOF
     cat > files/usr/sbin/filogic-tune-check <<'EOF'
 #!/bin/sh
 # Filogic 出厂调优自检：打印实际值与期望值
-chk() { printf '  %-40s %s\n' "$1" "$2"; }
+chk() { printf '  %-42s %s\n' "$1" "$2"; }
 
-echo "=== 内核参数 ==="
-chk "net.core.default_qdisc"              "$(sysctl -n net.core.default_qdisc 2>/dev/null)"
-chk "net.ipv4.tcp_congestion_control"     "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
-chk "net.core.rmem_max"                   "$(sysctl -n net.core.rmem_max 2>/dev/null)"
-chk "net.ipv4.tcp_slow_start_after_idle"  "$(sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null)"
-chk "net.ipv4.tcp_mtu_probing"            "$(sysctl -n net.ipv4.tcp_mtu_probing 2>/dev/null)"
-chk "net.ipv4.tcp_fastopen"               "$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null)"
-chk "net.netfilter.nf_conntrack_max"      "$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null)"
-chk "vm.min_free_kbytes"                  "$(sysctl -n vm.min_free_kbytes 2>/dev/null)"
+echo "=== 队列 / 拥塞 / 缓冲 ==="
+chk "net.core.default_qdisc"                   "$(sysctl -n net.core.default_qdisc 2>/dev/null)"
+chk "net.ipv4.tcp_congestion_control"          "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
+chk "net.core.rmem_max"                        "$(sysctl -n net.core.rmem_max 2>/dev/null)"
+chk "net.core.wmem_max"                        "$(sysctl -n net.core.wmem_max 2>/dev/null)"
+chk "net.ipv4.tcp_rmem"                        "$(sysctl -n net.ipv4.tcp_rmem 2>/dev/null)"
+chk "net.ipv4.tcp_wmem"                        "$(sysctl -n net.ipv4.tcp_wmem 2>/dev/null)"
+chk "net.ipv4.tcp_slow_start_after_idle"       "$(sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null)"
+chk "net.ipv4.tcp_mtu_probing"                 "$(sysctl -n net.ipv4.tcp_mtu_probing 2>/dev/null)"
+chk "net.ipv4.tcp_fastopen"                    "$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null)"
+
+echo
+echo "=== 队列深度 / BPF ==="
+chk "net.core.netdev_max_backlog"              "$(sysctl -n net.core.netdev_max_backlog 2>/dev/null)"
+chk "net.core.netdev_budget"                   "$(sysctl -n net.core.netdev_budget 2>/dev/null)"
+chk "net.core.bpf_jit_enable"                  "$(sysctl -n net.core.bpf_jit_enable 2>/dev/null)"
+chk "fs.file-max"                              "$(sysctl -n fs.file-max 2>/dev/null)"
+
+echo
+echo "=== 连接跟踪 ==="
+chk "net.netfilter.nf_conntrack_max"           "$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null)"
+chk "nf_conntrack_tcp_timeout_established"     "$(sysctl -n net.netfilter.nf_conntrack_tcp_timeout_established 2>/dev/null)"
+chk "nf_conntrack_acct"                        "$(sysctl -n net.netfilter.nf_conntrack_acct 2>/dev/null)"
+
+echo
+echo "=== 内存 ==="
+chk "vm.swappiness"                            "$(sysctl -n vm.swappiness 2>/dev/null)"
+chk "vm.vfs_cache_pressure"                    "$(sysctl -n vm.vfs_cache_pressure 2>/dev/null)"
+chk "vm.min_free_kbytes"                       "$(sysctl -n vm.min_free_kbytes 2>/dev/null)"
 
 echo
 echo "=== 转发加速 ==="
-chk "firewall flow_offloading"            "$(uci -q get firewall.@defaults[0].flow_offloading)"
-chk "firewall flow_offloading_hw"         "$(uci -q get firewall.@defaults[0].flow_offloading_hw)"
-chk "network packet_steering"             "$(uci -q get network.globals.packet_steering)"
+chk "firewall flow_offloading"                 "$(uci -q get firewall.@defaults[0].flow_offloading)"
+chk "firewall flow_offloading_hw"              "$(uci -q get firewall.@defaults[0].flow_offloading_hw)"
+chk "network packet_steering"                  "$(uci -q get network.globals.packet_steering || uci -q get network.@globals[0].packet_steering)"
 
 echo
 echo "=== 无线国家码 ==="
@@ -350,8 +440,12 @@ done
 echo
 echo "=== 内存 / ZRAM ==="
 free -m | sed -n '1,3p'
+[ -e /dev/zram0 ] && echo "  /dev/zram0 就绪（$(cat /sys/block/zram0/disksize 2>/dev/null) bytes）" || echo "  ⚠ /dev/zram0 不存在，检查 kmod-zram"
+
 echo
-echo "期望值：fq_pie | bbr | 8388608 | 0 | 1 | 3 | 32768 | 8192 | 1 | 1 | 1 | CN"
+echo "期望值："
+echo "  fq_pie | bbr | 8388608 | 8388608 | 4096 262144 8388608 | 4096 16384 8388608 | 0 | 1 | 3"
+echo "  4096 | 600 | 1 | 51200 | 32768 | 600 | 0 | 10 | 80 | 24576 | 1 | 1 | 1 | CN"
 EOF
     chmod 755 files/usr/sbin/filogic-tune-check
 
@@ -363,13 +457,17 @@ EOF
              files/etc/filogic/tuning.txt; do
         [ -s "$f" ] || { echo "::error::调优文件缺失或为空：$f"; exit 1; }
     done
-    grep -q '^net\.ipv4\.tcp_congestion_control = bbr' files/etc/sysctl.d/99-filogic-tune.conf \
-        || { echo "::error::BBR 未注入 sysctl"; exit 1; }
+    for kv in 'net.ipv4.tcp_congestion_control = bbr' 'net.core.default_qdisc = fq_pie' \
+              'net.ipv4.tcp_slow_start_after_idle = 0' 'vm.min_free_kbytes = 24576' \
+              'net.netfilter.nf_conntrack_max = 32768'; do
+        grep -qF "$kv" files/etc/sysctl.d/99-filogic-tune.conf \
+            || { echo "::error::sysctl 缺少关键项：$kv"; exit 1; }
+    done
     grep -q 'flow_offloading_hw' files/etc/uci-defaults/99-filogic-tune \
         || { echo "::error::flow_offloading_hw 未注入"; exit 1; }
     grep -q 'packet_steering' files/etc/uci-defaults/99-filogic-tune \
         || { echo "::error::packet_steering 未注入"; exit 1; }
-    echo ">>> 调优注入完成：sysctl=$(wc -l < files/etc/sysctl.d/99-filogic-tune.conf) 行，uci-defaults 就绪"
+    echo ">>> 调优注入完成：sysctl=$(grep -vc '^\s*#\|^\s*$' files/etc/sysctl.d/99-filogic-tune.conf) 项，uci-defaults 就绪"
 fi
 
 # ── 3. 值守式升级（GitHub Releases 固定 URL 自动检查）────────────
