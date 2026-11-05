@@ -582,6 +582,29 @@ jobs:
           make defconfig
           grep -q '^CONFIG_PACKAGE_uhttpd-mod-ucode=y' .config || { echo "::error::uhttpd-mod-ucode 未入选（LuCI 将 403）"; exit 1; }
 
+          # ── 内核瘦身项二次强制（防 make defconfig 因依赖重算把它们又打开）──
+          # 参考 mzwrt 的 blacklist 机制：config 里的 not set 会被 defconfig 重新计算覆盖，
+          # 因此在 defconfig 之后再强制关闭一次，并对残留项告警（不中断编译）。
+          TUNE_OFF="CONFIG_KERNEL_DEBUG_FS CONFIG_KERNEL_IO_URING CONFIG_KERNEL_MAGIC_SYSRQ CONFIG_KERNEL_COREDUMP CONFIG_KERNEL_ELF_CORE CONFIG_KERNEL_MEMCG CONFIG_KERNEL_MEMCG_KMEM CONFIG_KERNEL_MPTCP CONFIG_KERNEL_MPTCP_IPV6 CONFIG_RUBY_ENABLE_YJIT CONFIG_OPENSSL_ENGINE"
+          for sym in $TUNE_OFF; do
+            if grep -q "^${sym}=y" .config; then
+              sed -i "s|^${sym}=.*|# ${sym} is not set|" .config
+              echo ">>> 强制关闭 ${sym}（defconfig 曾重开）"
+            fi
+          done
+          make defconfig >/dev/null 2>&1 || true
+          TUNE_LEAK=0
+          for sym in $TUNE_OFF; do
+            if grep -q "^${sym}=y" .config; then
+              echo "::warning::${sym} 仍被其他符号 select，本次保留默认值（少一项瘦身）"
+              TUNE_LEAK=$((TUNE_LEAK + 1))
+            fi
+          done
+          echo ">>> 内核瘦身项残留：${TUNE_LEAK} 个"
+          for sym in CONFIG_PACKAGE_kmod-sched-fq-pie CONFIG_PACKAGE_zram-swap CONFIG_PACKAGE_kmod-tcp-bbr; do
+            grep -q "^${sym}=y" .config || echo "::warning::${sym} 未入选，对应调优项将不生效"
+          done
+
       - name: 启用 ccache
         run: |
           cd "$GITHUB_WORKSPACE/openwrt"
