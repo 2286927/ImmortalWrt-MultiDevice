@@ -1,7 +1,7 @@
 #!/bin/sh
 # ============================================================
-# autoupdate — CMCC RAX3000M 值守式固件检查/升级
-# 数据源：本仓库 GitHub Releases 固定资产 URL（releases/latest/download）
+# autoupdate — OpenWrt/ImmortalWrt 通用值守式固件检查/升级
+# 数据源：本仓库 GitHub Releases 固定 tag `autoupdate`（releases/download/autoupdate）
 # 依赖：curl（或 uclient-fetch + libustream）、sha256sum、sysupgrade
 # 用法：
 #   autoupdate check        检查更新（cron 调用，含随机延迟）
@@ -14,6 +14,8 @@
 #   option mirror 'auto'  下载加速：auto=内置镜像列表自动降级（默认）
 #                         none=仅直连；其他值=自定义加速前缀（如 https://ghfast.top/），失败自动回退直连
 # ============================================================
+
+set -u
 
 UCI_CFG="/etc/config/autoupdate"
 LOCAL_BUILD_FILE="/etc/autoupdate.build"
@@ -116,7 +118,7 @@ do_check() {
     fi
 
     # cron 场景随机延迟（最多 8 分钟），避免整点请求扎堆
-    [ "$1" = "now" ] || sleep $(( $(date +%s) % 480 ))
+    [ "${1:-}" = "now" ] || sleep $(( $(date +%s) % 480 ))
 
     if ! fetch "$base/$prefix-version.txt" "$VERSION_FILE" 30; then
         log "检查失败：无法下载 $prefix-version.txt（网络或仓库地址问题）"
@@ -201,6 +203,7 @@ do_status() {
     echo "prefix:      $(get_opt prefix)"
     echo "notify_url:  $(get_opt notify_url)"
     echo "auto_apply:  $(get_opt auto_apply)"
+    local _m
     _m=$(get_opt mirror); echo "mirror:      ${_m:-auto}"
     echo "local build: $(local_run_id)"
     if [ -s "$VERSION_FILE" ]; then
@@ -232,7 +235,7 @@ if command -v flock >/dev/null 2>&1; then
     flock -n 9 || { log "另一个实例正在运行，退出"; exit 1; }
 fi
 
-case "$1" in
+case "${1:-}" in
     check)   shift; do_check "$@" ;;
     apply)   do_apply ;;
     status)  do_status ;;
