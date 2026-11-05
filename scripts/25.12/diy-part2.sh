@@ -210,6 +210,168 @@ else
     exit 1
 fi
 
+# ── 2b. Filogic / RAX3000M 出厂性能调优（仅 cmcc_rax3000m 生效）─────
+# 优化方法来自对 mzwrt-25-12 的分析，落到固件运行时：
+#   ① 队列/拥塞：fq_pie + BBR（MT7981 是 Cortex-A53，无 AES-NI，加密路径已在 config 侧改为 ChaCha 优先）
+#   ② 大带宽时延积：TCP 收发缓冲上限 8MB，空闲后不回落慢启动，跨境单流可跑满千兆
+#   ③ 硬件转发：flow offloading 软+硬（MT7981 硬件 NAT）、packet steering 双核分流
+#   ④ 内存：ZRAM 兜底、conntrack 收敛到 32768、min_free_kbytes 留回收余量
+#   ⑤ 无线：国家码 CN，放开 5G 全信道与功率上限（默认 world 会压制）
+if [[ "${DEVICE_MODEL:-}" == "cmcc_rax3000m" ]]; then
+    echo ">>> 注入 Filogic(MT7981) 出厂调优 ..."
+    mkdir -p files/etc/sysctl.d files/etc/modules.d files/etc/uci-defaults \
+             files/etc/filogic files/usr/sbin
+
+    # ① 启动早期加载调度/拥塞模块，保证 sysctl 写入时目标键已存在
+    cat > files/etc/modules.d/99-filogic-tune <<'EOF'
+sch_fq_pie
+tcp_bbr
+EOF
+
+    # ② 运行时内核参数（/etc/init.d/sysctl 每次启动应用）
+    cat > files/etc/sysctl.d/99-filogic-tune.conf <<'EOF'
+# ===== MediaTek Filogic (MT7981) 出厂调优 =====
+# ── 队列与拥塞控制：BBR 高吞吐低延迟，fq_pie 抗 bufferbloat ──
+net.core.default_qdisc = fq_pie
+net.ipv4.tcp_congestion_control = bbr
+
+# ── 大带宽时延积：单流可跑满千兆跨境链路（8MB 上限）──
+net.core.rmem_max = 8388608
+net.core.wmem_max = 8388608
+net.ipv4.tcp_rmem = 4096 87380 8388608
+net.ipv4.tcp_wmem = 4096 65536 8388608
+
+# ── 空闲后不回落慢启动，避免突发流量重新爬坡 ──
+net.ipv4.tcp_slow_start_after_idle = 0
+# ── PMTU 黑洞探测，跨境链路更稳 ──
+net.ipv4.tcp_mtu_probing = 1
+# ── TCP Fast Open（客户端 + 服务端）──
+net.ipv4.tcp_fastopen = 3
+
+# ── 连接跟踪：512MB 内存下 32768 足够，且不会打爆 slab ──
+net.netfilter.nf_conntrack_max = 32768
+net.netfilter.nf_conntrack_tcp_timeout_established = 3600
+
+# ── 内存水位：给 Clash / AdGuardHome 留回收余量，降低 OOM 概率 ──
+vm.min_free_kbytes = 8192
+EOF
+
+    # ③ 首次启动一次性 UCI 默认值（执行后由系统自动删除）
+    cat > files/etc/uci-defaults/99-filogic-tune <<'EOF'
+#!/bin/sh
+# 首次启动生效：硬件转发卸载 + 双核分流 + 无线国家码 CN
+[ -f /etc/config/firewall ] && {
+	uci -q set firewall.@defaults[0].flow_offloading='1'
+	uci -q set firewall.@defaults[0].flow_offloading_hw='1'
+	uci -q commit firewall
+}
+
+[ -f /etc/config/network ] && {
+	uci -q set network.globals.packet_steering='1'
+	uci -q commit network
+}
+
+# 首次启动时 /etc/config/wireless 可能尚未生成，先让 wifi 生成默认配置再改国家码
+[ -f /etc/config/wireless ] || wifi config >/dev/null 2>&1
+if [ -f /etc/config/wireless ]; then
+	for s in $(uci -q show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+		uci -q set wireless.$s.country='CN'
+	done
+	uci -q commit wireless
+fi
+exit 0
+EOF
+    chmod 755 files/etc/uci-defaults/99-filogic-tune
+
+    # ④ 调优说明（供用户查阅，不参与运行）
+    cat > files/etc/filogic/tuning.txt <<'EOF'
+MediaTek Filogic (MT7981 / CMCC RAX3000M) 出厂调优说明
+=======================================================
+
+本固件出厂即启用以下优化，无需手动配置。
+
+一、国内直连：低延迟 · 高速率
+  1. 软件 + 硬件 Flow Offloading（MT7981 硬件 NAT 转发）
+  2. Packet Steering（双核分流，避免单核打满造成延迟毛刺）
+  3. fq_pie 队列 + BBR 拥塞控制
+
+二、跨境代理：OpenClash 吞吐
+  1. TCP 收发缓冲上限 8MB，空闲后不回落慢启动（tcp_slow_start_after_idle=0）
+  2. MTU 黑洞探测 + TCP Fast Open
+  3. 推荐 OpenClash 组合：Rule 模式 / 大陆分流 DIRECT / Fake-IP + TUN / 协议栈 System
+     说明：只有协议栈选 System，流量才走本机内核的 BBR 与大窗口；选 gVisor/Mixed 会绕开。
+
+三、内存与稳定性（512MB 长期挂机画像）
+  1. ZRAM 压缩内存兜底
+  2. conntrack 上限 32768，established 超时 3600s
+  3. vm.min_free_kbytes = 8192，降低 Clash + AdGuardHome 同开时的 OOM 概率
+  4. 内核已裁掉 memcg / io_uring / MPTCP / coredump / DEBUG_FS / MAGIC_SYSRQ
+
+四、无线
+  1. 默认国家码 CN：放开 5G 全信道与发射功率上限
+  2. 如所在地区法规不同，请自行改为对应国家码
+
+五、自检
+  执行 filogic-tune-check 查看全部参数实际值与期望值。
+
+注意：
+  - AdGuardHome 与 OpenClash 不要同时占用 53 端口，两套 Fake-IP 不要叠加。
+  - 手动执行 /etc/init.d/firewall restart 后，硬件卸载会按 UCI 配置自动恢复。
+EOF
+
+    # ⑤ 自检脚本
+    cat > files/usr/sbin/filogic-tune-check <<'EOF'
+#!/bin/sh
+# Filogic 出厂调优自检：打印实际值与期望值
+chk() { printf '  %-40s %s\n' "$1" "$2"; }
+
+echo "=== 内核参数 ==="
+chk "net.core.default_qdisc"              "$(sysctl -n net.core.default_qdisc 2>/dev/null)"
+chk "net.ipv4.tcp_congestion_control"     "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
+chk "net.core.rmem_max"                   "$(sysctl -n net.core.rmem_max 2>/dev/null)"
+chk "net.ipv4.tcp_slow_start_after_idle"  "$(sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null)"
+chk "net.ipv4.tcp_mtu_probing"            "$(sysctl -n net.ipv4.tcp_mtu_probing 2>/dev/null)"
+chk "net.ipv4.tcp_fastopen"               "$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null)"
+chk "net.netfilter.nf_conntrack_max"      "$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null)"
+chk "vm.min_free_kbytes"                  "$(sysctl -n vm.min_free_kbytes 2>/dev/null)"
+
+echo
+echo "=== 转发加速 ==="
+chk "firewall flow_offloading"            "$(uci -q get firewall.@defaults[0].flow_offloading)"
+chk "firewall flow_offloading_hw"         "$(uci -q get firewall.@defaults[0].flow_offloading_hw)"
+chk "network packet_steering"             "$(uci -q get network.globals.packet_steering)"
+
+echo
+echo "=== 无线国家码 ==="
+for dev in $(uci -q show wireless 2>/dev/null | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+	chk "$dev country" "$(uci -q get wireless.$dev.country)"
+done
+
+echo
+echo "=== 内存 / ZRAM ==="
+free -m | sed -n '1,3p'
+echo
+echo "期望值：fq_pie | bbr | 8388608 | 0 | 1 | 3 | 32768 | 8192 | 1 | 1 | 1 | CN"
+EOF
+    chmod 755 files/usr/sbin/filogic-tune-check
+
+    # ⑥ 构建期断言：文件存在且关键项已落地
+    for f in files/etc/sysctl.d/99-filogic-tune.conf \
+             files/etc/modules.d/99-filogic-tune \
+             files/etc/uci-defaults/99-filogic-tune \
+             files/usr/sbin/filogic-tune-check \
+             files/etc/filogic/tuning.txt; do
+        [ -s "$f" ] || { echo "::error::调优文件缺失或为空：$f"; exit 1; }
+    done
+    grep -q '^net\.ipv4\.tcp_congestion_control = bbr' files/etc/sysctl.d/99-filogic-tune.conf \
+        || { echo "::error::BBR 未注入 sysctl"; exit 1; }
+    grep -q 'flow_offloading_hw' files/etc/uci-defaults/99-filogic-tune \
+        || { echo "::error::flow_offloading_hw 未注入"; exit 1; }
+    grep -q 'packet_steering' files/etc/uci-defaults/99-filogic-tune \
+        || { echo "::error::packet_steering 未注入"; exit 1; }
+    echo ">>> 调优注入完成：sysctl=$(wc -l < files/etc/sysctl.d/99-filogic-tune.conf) 行，uci-defaults 就绪"
+fi
+
 # ── 3. 值守式升级（GitHub Releases 固定 URL 自动检查）────────────
 # 多设备仓库：AUTOUPDATE_PREFIX 由各 workflow env 注入（缺省保持 v2.1 RAX3000M 行为）
 AUTOUPDATE_PREFIX="${AUTOUPDATE_PREFIX:-autoupdate-RAX3000M-25.12}"
