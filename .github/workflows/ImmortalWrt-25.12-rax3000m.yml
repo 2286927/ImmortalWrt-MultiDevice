@@ -832,6 +832,35 @@ jobs:
             fi
           done
 
+          # ── 刷机引导文件（EMMC：GPT 分区表 / preloader / BL31+U-Boot FIP）──
+          # 上游 filogic.mk 的 ARTIFACTS 会生成 emmc-gpt.bin、emmc-preloader.bin、
+          # emmc-bl31-uboot.fip，但它们不匹配 sysupgrade/factory/initramfs 通配，
+          # 不显式处理就会丢在 bin 目录里、release 里永远没有刷机文件。
+          BOOT_COUNT=0
+          for file in *gpt*.bin *preloader*.bin *bl31-uboot*.fip; do
+            [ -f "$file" ] || continue
+            case "$file" in
+              "${DEVICE_MODEL}_"*) continue ;;
+            esac
+            BOOT_MEDIA=$(echo "$file" | grep -oE '^(emmc|nand)' || echo boot)
+            BOOT_KIND=$(echo "$file" | sed -E 's/^(emmc|nand)-//; s/\.(bin|fip)$//')
+            NEW_NAME="${DEVICE_MODEL}_${FIRMWARE_VERSION}${FILE_DATE}_${BOOT_MEDIA}-${BOOT_KIND}.${file##*.}"
+            echo "🔧 复制引导文件：$file → $NEW_NAME"
+            cp -f "$file" "$NEW_NAME"
+            BOOT_COUNT=$((BOOT_COUNT + 1))
+          done
+
+          if [ "$BOOT_COUNT" -eq 0 ]; then
+            echo "⚠️ 未找到 gpt / preloader / bl31-uboot 引导文件，本次 release 将不含刷机文件"
+            ls -la
+          else
+            echo "✅ 已整理 $BOOT_COUNT 个引导文件"
+            # sha256sums 是编译期产物，不含重命名后的副本，单独生成一份
+            sha256sum *-preloader.bin *-bl31-uboot.fip *-gpt.bin > bootloader-sha256sums.txt 2>/dev/null || true
+            cat bootloader-sha256sums.txt 2>/dev/null || true
+            ls -lh *-preloader.bin *-bl31-uboot.fip *-gpt.bin 2>/dev/null || true
+          fi
+
           echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
           echo "status=success" >> "$GITHUB_OUTPUT"
           echo "🎉 固件整理完成"
@@ -840,7 +869,7 @@ jobs:
         if: steps.compile.outputs.status == 'success'
         run: |
           set -e
-          PREFIX="autoupdate-RAX3000M-25.12"
+          PREFIX="${AUTOUPDATE_PREFIX:?env AUTOUPDATE_PREFIX 未定义}"
           SYSUPGRADE_FILE=$(ls "$FIRMWARE"/*sysupgrade*.itb 2>/dev/null | head -n 1 || true)
           [ -z "$SYSUPGRADE_FILE" ] && SYSUPGRADE_FILE=$(ls "$FIRMWARE"/*sysupgrade* 2>/dev/null | head -n 1 || true)
           if [ -z "$SYSUPGRADE_FILE" ]; then
@@ -964,6 +993,10 @@ jobs:
           body_path: release
           files: |
             ${{ env.UPLOAD_ALL_FILES == 'true' && format('{0}/*', env.FIRMWARE) || format('{0}/*{{sysupgrade,initramfs}}*.*', env.FIRMWARE) }}
+            ${{ env.FIRMWARE }}/*-preloader.bin
+            ${{ env.FIRMWARE }}/*-bl31-uboot.fip
+            ${{ env.FIRMWARE }}/*-gpt.bin
+            ${{ env.FIRMWARE }}/bootloader-sha256sums.txt
             ${{ env.FIRMWARE }}/sha256sums
             ${{ env.FIRMWARE }}/autoupdate-*version.txt
 
