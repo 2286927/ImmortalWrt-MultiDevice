@@ -820,7 +820,7 @@ jobs:
         if: steps.compile.outputs.status == 'success'
         run: |
           set -e
-          PREFIX="autoupdate-OCTOPUS-24.10"
+          PREFIX="${AUTOUPDATE_PREFIX:?env AUTOUPDATE_PREFIX 未定义}"
           # armsr combined-efi 为 UEFI 引导镜像，晶晨 S912（安卓 bootloader 启动）无法使用；
           # 值守升级镜像必须用 flippy 双内核包（octopus-s912-*.img.gz），
           # 由 package-s912 job 生成并上传到同一 Release，固定 URL 资产名保持不变。
@@ -881,7 +881,7 @@ jobs:
             echo "设备型号: $DEVICE_MODEL"
             echo "编译时间: $(date +'%Y-%m-%d %H:%M %Z')"
             echo "后台地址: ${LAN_IP} 或 http://${LAN_HOSTNAME}.lan/"
-            echo "值守升级固定地址: https://github.com/${{ github.repository }}/releases/latest/download/autoupdate-OCTOPUS-24.10-img.gz"
+            echo "值守升级固定地址: https://github.com/${{ github.repository }}/releases/download/autoupdate/autoupdate-OCTOPUS-24.10-img.gz"
             echo "源代码仓库: $REPO_URL"
             echo "源仓库分支: $REPO_BRANCH"
             echo "源仓库提交: [查看编译时提交]($SOURCE_COMMIT_URL)"
@@ -1125,7 +1125,7 @@ jobs:
           ls -lh "$OUT_DIR"/octopus-s912-*
           # 值守升级固定资产：以 flippy 双内核包为源（晶晨 S912 实际可用），
           # 固定 URL 资产名保持 autoupdate-OCTOPUS-24.10-img.gz 不变
-          PREFIX="autoupdate-OCTOPUS-24.10"
+          PREFIX="${AUTOUPDATE_PREFIX:?env AUTOUPDATE_PREFIX 未定义}"
           cp "$OUT_DIR/octopus-s912-24.10.img.gz" "$OUT_DIR/${PREFIX}-img.gz"
           ( cd "$OUT_DIR" && sha256sum "${PREFIX}-img.gz" > "${PREFIX}-img.gz.sha256" )
           echo ">>> 值守升级固定资产："
