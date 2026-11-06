@@ -1,0 +1,152 @@
+#!/bin/sh /etc/rc.common
+#==================================================================================================
+# loghygiene —— OneCloud 25.12 出厂固件日志卫生与已知缺陷自愈
+#
+# 背景：经实机巡检（2026-11-06），出厂固件在无任何用户操作时即持续产生 err/crit 级日志，
+#       其中 1 条 Critical（dnsmasq 启动失败）与多条 Error 属系统性缺陷，根因均在出厂模板/
+#       包组合，而非用户配置。本脚本在每次开机时幂等校验并纠正，作为配方仓（recipe）模板的
+#       兜底，确保即使上游 recipe 未同步修正，新出厂固件也不再复现相同问题。
+#
+# 处置项（与实机验证报告一一对应）：
+#   A9  crond 以 debug 级(5)运行 → 每分钟刷 4~5 行 cron.err，淹没真实错误，挤占 64KB 环形缓冲
+#   B5  system.log_proto='udp' 但无 log_ip → 孤儿远程 syslog 残留，削弱本地日志
+#   A1  dnsmasq 绑定 docker0(172.17.0.1)，restart 时新旧实例争抢端口 → daemon.crit 启动失败
+#   A4  fstab 残留指向已不存在 UUID 的 mount 条目 → 每次开机 block 探测报错
+#   A2  avahi-dbus-daemon 已装但 /etc/passwd 无 avahi 用户 → 服务反复崩溃重启(实测 7 次)
+#   B2  nfs-kernel-server 启用但 /etc/exports 为空 → NFSD -110 + exportfs 报错，纯空转占内存
+#
+# 设计原则：
+#   * 幂等：可重复执行，无变更时不写 flash（不 commit、不 reload）
+#   * 容错：任一项失败仅记日志，绝不阻塞开机（恒定 exit 0）
+#   * 可观测：仅在发生实际变更时通过 logger 落 syslog，避免自身制造噪声
+#   * 不越权：只纠正上述已知项，不触碰 DNS 上游、防火墙、AGH/代理等用户业务配置
+#==================================================================================================
+
+START=99
+EXTRA_COMMANDS="status"
+EXTRA_HELP="	status	Show current log-hygiene state"
+
+LOG_TAG="loghygiene"
+CHANGED=0
+RELOAD_DNSMASQ=0
+
+_log() {
+	logger -t "$LOG_TAG" "$*" 2>/dev/null
+	CHANGED=1
+}
+
+start() {
+	#------------------------------------------------------------------
+	# A9: crond 日志级别 5(debug) → 8(error)
+	#------------------------------------------------------------------
+	_cur=$(uci -q get system.@system[0].cronloglevel)
+	if [ "$_cur" != "8" ]; then
+		uci -q set system.@system[0].cronloglevel='8' && _log "A9 cronloglevel ${_cur:-unset} -> 8"
+	fi
+
+	#------------------------------------------------------------------
+	# B5: 无 log_ip 的孤儿 log_proto
+	#------------------------------------------------------------------
+	if uci -q get system.@system[0].log_proto >/dev/null 2>&1; then
+		_lp=$(uci -q get system.@system[0].log_proto)
+		if [ -z "$(uci -q get system.@system[0].log_ip)" ]; then
+			uci -q delete system.@system[0].log_proto && _log "B5 removed orphan log_proto (${_lp})"
+		fi
+	fi
+
+	if [ $CHANGED -eq 1 ]; then
+		uci -q commit system
+	fi
+
+	#------------------------------------------------------------------
+	# A1: dnsmasq 排除 docker0
+	#     docker0 由 dockerd 后建，bind-dynamic 需为其额外建 socket；dnsmasq 重启时
+	#     新旧实例争抢 172.17.0.1:<port> 触发 daemon.crit "Address in use"。
+	#     排除后 dnsmasq 不再持有该地址，竞态窗口消失（实机连续 2 次 restart 验证 crit=0）。
+	#------------------------------------------------------------------
+	if uci -q get dhcp.@dnsmasq[0] >/dev/null 2>&1; then
+		_ni=$(uci -q get dhcp.@dnsmasq[0].notinterface)
+		case " $_ni " in
+			*" docker0 "*)
+				;;
+			*)
+				uci -q add_list dhcp.@dnsmasq[0].notinterface='docker0' && {
+					uci -q commit dhcp
+					RELOAD_DNSMASQ=1
+					_log "A1 dhcp notinterface += docker0"
+				}
+				;;
+		esac
+	fi
+
+	#------------------------------------------------------------------
+	# A4: fstab 中 UUID 已不存在的 mount 条目
+	#------------------------------------------------------------------
+	if command -v blkid >/dev/null 2>&1 && [ -f /etc/config/fstab ]; then
+		_fstab_changed=0
+		for _s in $(uci -q show fstab 2>/dev/null | sed -n 's/^fstab\.\([^.=]*\)=mount$/\1/p'); do
+			_uuid=$(uci -q get "fstab.$_s.uuid")
+			_target=$(uci -q get "fstab.$_s.target")
+			[ -z "$_uuid" ] && continue
+			if ! blkid -U "$_uuid" >/dev/null 2>&1; then
+				uci -q delete "fstab.$_s" && {
+					_fstab_changed=1
+					_log "A4 removed stale fstab.$_s (target=$_target uuid=$_uuid)"
+				}
+			fi
+		done
+		[ $_fstab_changed -eq 1 ] && uci -q commit fstab
+	fi
+
+	#------------------------------------------------------------------
+	# A2: avahi 运行用户/组缺失
+	#     仅当 avahi 包存在且用户缺失时补齐，保留 mDNS 功能（不粗暴禁用）。
+	#------------------------------------------------------------------
+	if [ -x /etc/init.d/avahi-daemon ] && ! grep -q '^avahi:' /etc/passwd 2>/dev/null; then
+		_uid=1000
+		while grep -qE ":${_uid}:" /etc/passwd 2>/dev/null; do
+			_uid=$((_uid + 1))
+			[ $_uid -gt 1100 ] && break
+		done
+		if [ $_uid -le 1100 ]; then
+			echo "avahi:x:${_uid}:${_uid}:avahi:/var/run/avahi:/bin/false" >> /etc/passwd
+			grep -q '^avahi:' /etc/group 2>/dev/null || echo "avahi:x:${_uid}:" >> /etc/group
+			mkdir -p /var/run/avahi
+			chown "avahi:avahi" /var/run/avahi 2>/dev/null
+			_log "A2 created avahi user/group (uid=${_uid})"
+		fi
+	fi
+
+	#------------------------------------------------------------------
+	# B2: NFS 已启用但无任何导出 → 纯空转（NFSD -110 / exportfs 报错）
+	#------------------------------------------------------------------
+	if [ -x /etc/init.d/nfs ]; then
+		_exportcnt=$(grep -cvE '^[[:space:]]*#|^[[:space:]]*$' /etc/exports 2>/dev/null)
+		[ -z "$_exportcnt" ] && _exportcnt=0
+		if [ "$_exportcnt" -eq 0 ] 2>/dev/null; then
+			if /etc/init.d/nfs enabled >/dev/null 2>&1; then
+				/etc/init.d/nfs disable >/dev/null 2>&1 && _log "B2 nfs disabled (no exports)"
+			fi
+			/etc/init.d/nfs stop >/dev/null 2>&1
+		fi
+	fi
+
+	#------------------------------------------------------------------
+	# 变更后按需重载（仅当本轮确实改了配置）
+	#------------------------------------------------------------------
+	if [ $RELOAD_DNSMASQ -eq 1 ]; then
+		/etc/init.d/dnsmasq reload >/dev/null 2>&1 || \
+			/etc/init.d/dnsmasq restart >/dev/null 2>&1
+	fi
+
+	return 0
+}
+
+# 供手工排障调用：/etc/init.d/loghygiene status
+status() {
+	echo "cronloglevel : $(uci -q get system.@system[0].cronloglevel)"
+	echo "log_proto    : $(uci -q get system.@system[0].log_proto || echo '(unset)')"
+	echo "dnsmasq notif: $(uci -q get dhcp.@dnsmasq[0].notinterface || echo '(unset)')"
+	echo "avahi user   : $(grep -c '^avahi:' /etc/passwd 2>/dev/null || echo 0)"
+	echo "nfs enabled  : $(/etc/init.d/nfs enabled >/dev/null 2>&1 && echo yes || echo no)"
+}
