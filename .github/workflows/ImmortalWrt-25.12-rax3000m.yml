@@ -867,12 +867,24 @@ jobs:
             [ -f "$file" ] || continue
             case "$file" in
               "${DEVICE_MODEL}_"*) continue ;;
+              # v9.14（2026-11-06）：本线只发 EMMC 刷机文件。
+              #   bin 目录同时产出 nand 的 preloader/fip，混进 release 会让 EMMC 机型刷错变砖。
+              *nand*) echo "SKIP nand boot file (EMMC line only): $file"; continue ;;
             esac
-            BOOT_MEDIA=$(echo "$file" | grep -oE '^(emmc|nand)' || echo boot)
-            BOOT_KIND=$(echo "$file" | sed -E 's/^(emmc|nand)-//; s/\.(bin|fip)$//')
+            # v9.14（2026-11-06）修正：原逻辑按文件名开头匹配 emmc/nand，
+            #   但实际产物名是 immortalwrt-mediatek-filogic-cmcc_rax3000m-emmc-gpt.bin，
+            #   开头是 immortalwrt，导致 BOOT_MEDIA 退化成 boot、BOOT_KIND 保留整串，
+            #   生成 cmcc_rax3000m_<ver>_<date>_boot-immortalwrt-mediatek-filogic-... 的怪名字。
+            #   改为在文件名中任意位置匹配 [_-](emmc|nand)[_-]。
+            BOOT_MEDIA=$(printf '%s' "$file" | sed -nE 's/.*[_-](emmc|nand)[_-].*/\1/p' | head -n1)
+            [ -n "$BOOT_MEDIA" ] || BOOT_MEDIA="boot"
+            BOOT_KIND=$(printf '%s' "$file" | sed -E 's/.*[_-](emmc|nand)[_-]//; s/\.(bin|fip)$//')
             NEW_NAME="${DEVICE_MODEL}_${FIRMWARE_VERSION}${FILE_DATE}_${BOOT_MEDIA}-${BOOT_KIND}.${file##*.}"
             echo "🔧 复制引导文件：$file → $NEW_NAME"
-            cp -f "$file" "$NEW_NAME"
+            # v9.14（2026-11-06）：由 cp 改 mv。原来复制不删，原始未重命名文件
+            #   会同时被 release 的 *-gpt.bin / *-preloader.bin / *-bl31-uboot.fip 匹配，
+            #   造成同一份文件以两个名字重复上传。
+            mv -f "$file" "$NEW_NAME"
             BOOT_COUNT=$((BOOT_COUNT + 1))
           done
 
