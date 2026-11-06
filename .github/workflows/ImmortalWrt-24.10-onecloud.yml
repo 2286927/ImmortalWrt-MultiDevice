@@ -221,6 +221,20 @@ jobs:
         working-directory: /workdir/openwrt
         run: |
           make defconfig
+          # r50 守卫: socat 必须带 OpenSSL（TLS 终结能力）
+          #   packages feed 的 net/socat/Makefile 在 CONFIG_SOCAT_SSL!=y 时传 --disable-openssl，
+          #   编出的 socat -V 会显示 #undef WITH_OPENSSL，OPENSSL-LISTEN/CONNECT 不可用。
+          #   本守卫放在 make defconfig 之后，兜住依赖重新求解。
+          if grep -qx 'CONFIG_PACKAGE_socat=y' .config; then
+            if ! grep -qx 'CONFIG_SOCAT_SSL=y' .config || ! grep -qx 'CONFIG_PACKAGE_libopenssl=y' .config; then
+              echo "::error::socat 已选但缺 OpenSSL 支持，TLS 终结不可用"
+              grep -E '^#? ?CONFIG_(SOCAT_SSL|PACKAGE_libopenssl)|^CONFIG_PACKAGE_socat=' .config || true
+              exit 1
+            fi
+            echo "PASS⑭ socat OpenSSL 已开启（SOCAT_SSL=y + libopenssl=y）"
+          else
+            echo ">>> 本配置未选 socat，跳过 OpenSSL 守卫"
+          fi
           # r13.4 守卫: qmodem 系不得被依赖链拉回（玩客云无 SIM 槽）
           if grep -qE '^CONFIG_PACKAGE_.*[Qq]modem=y' .config; then
             echo "::error::qmodem 系被依赖链拉回:"; grep -E '^CONFIG_PACKAGE_.*[Qq]modem' .config; exit 1

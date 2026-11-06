@@ -160,6 +160,54 @@ else
     echo "⚠️  未找到 patch-luci-app-socat.sh，跳过 socat 修复"
 fi
 
+# ── 1h. socat 必须带 OpenSSL（TLS 终结能力硬门禁）───────────────
+# 背景：packages feed 的 net/socat/Makefile
+#   config SOCAT_SSL（default n），且
+#   ifneq ($(CONFIG_SOCAT_SSL),y)
+#     CONFIGURE_ARGS += --disable-openssl
+#   endif
+#   不开时编出的 socat -V 显示 #undef WITH_OPENSSL，
+#   OPENSSL-LISTEN / OPENSSL-CONNECT 全部不可用。
+#
+# 执行上下文（已按仓库现状核对，勿照抄 $GITHUB_WORKSPACE/.config）：
+#   workflow「加载配置」步骤先 cp config/<设备>-<分支>.config openwrt/.config，
+#   再 cd openwrt 后执行本脚本 → 此处 CWD=openwrt/，.config 就是编译树根的 .config。
+#   本段早于「生成编译配置」的 make defconfig，属 feeds 装完之后、make 之前。
+#
+# 做法：先幂等补写（在 CONFIG_PACKAGE_socat=y 之后紧邻插入，去掉并存的 not set 行），
+#       再硬校验三条符号；缺任何一条直接中止，避免又编出一版无 SSL 的 socat。
+SVC_CFG=".config"
+if [ -f "$SVC_CFG" ] && grep -qx 'CONFIG_PACKAGE_socat=y' "$SVC_CFG"; then
+    sed -i '/^# CONFIG_SOCAT_SSL is not set$/d' "$SVC_CFG"
+    sed -i '/^# CONFIG_PACKAGE_libopenssl is not set$/d' "$SVC_CFG"
+    if ! grep -qx 'CONFIG_SOCAT_SSL=y' "$SVC_CFG"; then
+        sed -i '/^CONFIG_PACKAGE_socat=y$/a CONFIG_SOCAT_SSL=y' "$SVC_CFG"
+        echo ">>> 已补写 CONFIG_SOCAT_SSL=y（紧随 CONFIG_PACKAGE_socat=y）"
+    fi
+    # libopenssl 属显式补：SOCAT_SSL 的 DEPENDS 只在 menuconfig 求值时生效，
+    # 直接喂静态 .config 时依赖求解未必补上，这里兜一层。
+    if ! grep -qx 'CONFIG_PACKAGE_libopenssl=y' "$SVC_CFG"; then
+        sed -i '/^CONFIG_SOCAT_SSL=y$/a CONFIG_PACKAGE_libopenssl=y' "$SVC_CFG"
+        echo ">>> 已补写 CONFIG_PACKAGE_libopenssl=y"
+    fi
+fi
+
+if [ -f "$SVC_CFG" ] && grep -qx 'CONFIG_PACKAGE_socat=y' "$SVC_CFG"; then
+    _svc_miss=""
+    grep -qx 'CONFIG_PACKAGE_socat=y' "$SVC_CFG" || _svc_miss="$_svc_miss CONFIG_PACKAGE_socat"
+    grep -qx 'CONFIG_SOCAT_SSL=y' "$SVC_CFG" || _svc_miss="$_svc_miss CONFIG_SOCAT_SSL"
+    grep -qx 'CONFIG_PACKAGE_libopenssl=y' "$SVC_CFG" || _svc_miss="$_svc_miss CONFIG_PACKAGE_libopenssl"
+    if [ -n "$_svc_miss" ]; then
+        echo "❌ socat 需要 OpenSSL 支持，但以下符号未生效：$_svc_miss"
+        echo "   要求同时为 y：CONFIG_PACKAGE_socat / CONFIG_SOCAT_SSL / CONFIG_PACKAGE_libopenssl"
+        echo "   否则 socat -V 会显示 #undef WITH_OPENSSL，OPENSSL-LISTEN/CONNECT 不可用"
+        exit 1
+    fi
+    echo "✅ socat OpenSSL 已开启（SOCAT_SSL=y + libopenssl=y，socat 将编译为带 TLS 版本）"
+else
+    echo ">>> 本配置未选用 socat，跳过 socat OpenSSL 门禁"
+fi
+
 # ── 2. 第三方软件包导入 + 官方同名清理（第三方优先） ─────────────────────────
 SYNC_SH="$GITHUB_WORKSPACE/scripts/common/package-sync.sh"
 [ -f "$SYNC_SH" ] || SYNC_SH="$MYDIR/../common/package-sync.sh"

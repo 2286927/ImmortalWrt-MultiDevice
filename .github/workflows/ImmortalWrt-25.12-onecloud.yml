@@ -368,6 +368,20 @@ jobs:
           test -x files/etc/uci-defaults/99-rootfs-grow || { echo "::error::99-rootfs-grow 未注入"; exit 1; }
           test -f files/www/luci-static/resources/view/status/include/10_system.js || { echo "::error::10_system.js 未注入"; exit 1; }
           make defconfig
+          # r50 守卫: socat 必须带 OpenSSL（TLS 终结能力）
+          #   packages feed 的 net/socat/Makefile 在 CONFIG_SOCAT_SSL!=y 时传 --disable-openssl，
+          #   编出的 socat -V 会显示 #undef WITH_OPENSSL，OPENSSL-LISTEN/CONNECT 不可用。
+          #   本守卫放在 make defconfig 之后，兜住依赖重新求解。
+          if grep -qx 'CONFIG_PACKAGE_socat=y' .config; then
+            if ! grep -qx 'CONFIG_SOCAT_SSL=y' .config || ! grep -qx 'CONFIG_PACKAGE_libopenssl=y' .config; then
+              echo "::error::socat 已选但缺 OpenSSL 支持，TLS 终结不可用"
+              grep -E '^#? ?CONFIG_(SOCAT_SSL|PACKAGE_libopenssl)|^CONFIG_PACKAGE_socat=' .config || true
+              exit 1
+            fi
+            echo "PASS⑭ socat OpenSSL 已开启（SOCAT_SSL=y + libopenssl=y）"
+          else
+            echo ">>> 本配置未选 socat，跳过 OpenSSL 守卫"
+          fi
           # kconfig VARIANT 校正: make defconfig 把 .config 当默认建议，变体自动选择偏向 iptables，
           # 在 defconfig 定型后强制切回 nftables（后续 syncconfig 保留显式值）
           sed -i 's/^CONFIG_PACKAGE_miniupnpd-iptables=y$/# CONFIG_PACKAGE_miniupnpd-iptables is not set/' .config
