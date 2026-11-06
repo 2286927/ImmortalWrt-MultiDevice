@@ -1,7 +1,7 @@
 #========================================================================================================================
 # 玩客云（OneCloud / Amlogic S805 meson8b cortex-a5 32位）直刷固件
 # 方案来源：旧仓库 2286927/OneCloud_immortalwrt 成功配方（commit 6cb5de77，2026-04-17 / 05-04 两次编译成功）
-#   1. immortalwrt 官方源码无 amlogic target，必须注入配方仓库的 lede6.6/target/linux/amlogic 树（内核 6.6）
+#   1. immortalwrt 官方源码无 amlogic target，构建时从 coolsnowwolf/lede clone 平台树，6.6 补丁/配置改名 6.12
 #   2. 配置使用配方仓库 Config/quicker-amlogic.config（32 位 meson8b 专用）
 #   3. convert3.sh 制作 AmlImg 直刷包（含 uboot，双USB公头线刷）
 # 上游适配修复（原 16 连败根因）：vernesong/OpenClash core 分支改版——premium/ 目录删除、classic dev 内核停发，
@@ -33,8 +33,10 @@ on:
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-25.12
+  # r52: 配方已固化入库（recipe-vendor.tar.gz），构建不再 clone 外部仓库。
+  #      以下两项仅作溯源记录，如需追溯来源请查 recipe/.source-commit
   RECIPE_REPO: https://github.com/2286927/OneCloud_immortalwrt
-  RECIPE_REF: 6cb5de778058b7f885bcb6d074973cfdce741c1b
+  RECIPE_REF: 390f150fc256e38a4b21311cb1cbb9f3d367c590
   OWRT_IP: 172.16.8.1
   OWRT_NAME: OneCloud
   OWRT_CFG: recipe/Config/quicker-amlogic.config
@@ -98,15 +100,29 @@ jobs:
           git clone $REPO_URL -b $REPO_BRANCH openwrt
           ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-      - name: 拉取成功配方仓库并适配路径
+      - name: 展开内置配方（自给自足，不再依赖外部仓库）
         run: |
-          git clone $RECIPE_REPO recipe
-          cd recipe && git checkout $RECIPE_REF
+          # r52: 配方已固化入库为 recipe-vendor.tar.gz（184 文件 / 6.36MB 源码）。
+          #   未纳入 vendor 的部分及原因：
+          #     · lede/ lede6.6/ lede6.12/  —— 平台树构建时从 coolsnowwolf/lede clone；
+          #       boot 分区由 scripts/onecloud/convert3.sh 从本次编译产物 p1 提取
+          #     · AmlImg / uboot.img        —— r42 已固化于 tools/onecloud/
+          #     · openclash core/GeoIP/GeoSite/Country.mmdb、v2ray geodata
+          #       —— sh/openclash32.sh 与 scripts/onecloud/openclash32-fixed.sh 构建时重新下载
+          cd "$GITHUB_WORKSPACE"
+          test -f recipe-vendor.tar.gz || { echo "::error::缺少 recipe-vendor.tar.gz"; exit 1; }
+          sha256sum -c recipe-vendor.sha256 || { echo "::error::recipe-vendor 校验失败"; exit 1; }
+          rm -rf recipe
+          tar -xzf recipe-vendor.tar.gz
+          test -f recipe/Config/quicker-amlogic.config || { echo "::error::recipe 展开不完整：缺 quicker-amlogic.config"; exit 1; }
+          test -f recipe/sh/setup.sh || { echo "::error::recipe 展开不完整：缺 sh/setup.sh"; exit 1; }
+          test -d recipe/onecloud/files/etc || { echo "::error::recipe 展开不完整：缺 onecloud/files/etc"; exit 1; }
+          cd recipe
           # 配方脚本内部的 $GITHUB_WORKSPACE/xxx 引用统一指向 recipe 子目录
           sed -E -i 's#\$GITHUB_WORKSPACE/(sh|lede6|onecloud|ax6|Config|Ubuntu)#\$GITHUB_WORKSPACE/recipe/\1#g' sh/*.sh
-          dos2unix sh/*.sh
+          dos2unix sh/*.sh 2>/dev/null || true
           chmod +x sh/*.sh
-          echo "配方仓库: $(git log -1 --format='%h %s')"
+          echo "配方来源: 内置 vendor，上游 commit $(cat .source-commit 2>/dev/null || echo unknown)"
 
       - name: 注入 amlogic target 树并适配 6.12 内核(核心修复)
         working-directory: /workdir/openwrt
