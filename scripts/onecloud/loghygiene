@@ -14,6 +14,8 @@
 #   A4  fstab 残留指向已不存在 UUID 的 mount 条目 → 每次开机 block 探测报错
 #   A2  avahi-dbus-daemon 已装但 /etc/passwd 无 avahi 用户 → 服务反复崩溃重启(实测 7 次)
 #   B2  nfs-kernel-server 启用但 /etc/exports 为空 → NFSD -110 + exportfs 报错，纯空转占内存
+#   B6  chronyd 与 sysntpd 同时启用 → 两个 NTP 客户端抢 adjtimex()，chronyd 报
+#       "System clock interference detected (another NTP client?)"
 #
 # 设计原则：
 #   * 幂等：可重复执行，无变更时不写 flash（不 commit、不 reload）
@@ -132,6 +134,48 @@ start() {
 	fi
 
 	#------------------------------------------------------------------
+	# B6: chronyd 与 sysntpd 同时启用
+	#     chrony 是额外装入的包（feeds/packages/net/chrony，S15 启动），而 sysntpd 由
+	#     base-files 依 system.ntp 段自动生成 S98sysntpd —— 装了 chrony 却没停 sysntpd，
+	#     两个 NTP 客户端各自 adjtimex()，chronyd 触发
+	#     daemon.warn "System clock interference detected (another NTP client?)"。
+	#     保留 chronyd（精度亚毫秒，S15 优先），禁用 sysntpd。
+	#     仅在 chronyd 确实启用时才动 sysntpd，避免把用户唯一的时间同步手段关掉。
+	#
+	#     注：此处不修正 chrony 的 allow/interface —— 那属"是否对外提供 NTP 服务"的
+	#     业务决策，且 chrony init 的 handle_allow 在旁路由布局下会走 wan6 分支输出
+	#     allow ::/0（对公网 IPv6 全放开），不可由自愈脚本擅自启用。
+	#------------------------------------------------------------------
+	if [ -x /etc/init.d/chronyd ] && [ -x /etc/init.d/sysntpd ]; then
+		if /etc/init.d/chronyd enabled >/dev/null 2>&1; then
+			_b6_act=""
+			if /etc/init.d/sysntpd enabled >/dev/null 2>&1; then
+				/etc/init.d/sysntpd disable >/dev/null 2>&1
+				_b6_act="disabled+stopped"
+			elif pgrep -x ntpd >/dev/null 2>&1; then
+				# sysntpd 已 disable 但 ntpd 进程残留（手工启动 / 上一轮未停净）
+				_b6_act="stopped residual ntpd"
+			fi
+			if [ -n "$_b6_act" ]; then
+				/etc/init.d/sysntpd stop >/dev/null 2>&1
+				# ntpd 由 procd 托管在 ujail 内，term 到进程真正退出有 1~3s 延迟；
+				# 不等它退净就返回，chronyd 仍会再报一次 interference。故此处等待确认。
+				_b6_w=0
+				while pgrep -x ntpd >/dev/null 2>&1 && [ $_b6_w -lt 5 ]; do
+					sleep 1
+					_b6_w=$((_b6_w + 1))
+				done
+				if pgrep -x ntpd >/dev/null 2>&1; then
+					logger -t "$LOG_TAG" -p user.warn \
+						"B6 sysntpd $_b6_act 但 ntpd 仍在运行（stop 超时）"
+				else
+					_log "B6 sysntpd $_b6_act (chronyd 已启用，避免双 NTP 抢时钟)"
+				fi
+			fi
+		fi
+	fi
+
+	#------------------------------------------------------------------
 	# 变更后按需重载（仅当本轮确实改了配置）
 	#------------------------------------------------------------------
 	if [ $RELOAD_DNSMASQ -eq 1 ]; then
@@ -149,4 +193,8 @@ status() {
 	echo "dnsmasq notif: $(uci -q get dhcp.@dnsmasq[0].notinterface || echo '(unset)')"
 	echo "avahi user   : $(grep -c '^avahi:' /etc/passwd 2>/dev/null || echo 0)"
 	echo "nfs enabled  : $(/etc/init.d/nfs enabled >/dev/null 2>&1 && echo yes || echo no)"
+	echo "chronyd      : $(/etc/init.d/chronyd enabled >/dev/null 2>&1 && echo enabled || echo disabled)"
+	echo "sysntpd      : $(/etc/init.d/sysntpd enabled >/dev/null 2>&1 && echo enabled || echo disabled)"
+	echo "ntpd running : $(pgrep -x ntpd >/dev/null 2>&1 && echo yes || echo no)"
+	echo "ntp :123     : $(netstat -lnup 2>/dev/null | grep -q ':123 ' && echo listening || echo 'not listening (chrony allow 未生成)')"
 }
