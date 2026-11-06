@@ -821,6 +821,12 @@ jobs:
         run: |
           set -e
           PREFIX="${AUTOUPDATE_PREFIX:?env AUTOUPDATE_PREFIX 未定义}"
+          # v9.15（2026-11-06）：值守资产一律输出到独立目录 au-assets，
+          #   不再写入固件目录。原做法下 autoupdate-* 会被设备 Release 的
+          #   *{sysupgrade,initramfs}*.* 通配与 autoupdate-* 显式行双重收录，
+          #   同一份镜像在发布页出现两个名字、体积翻倍。
+          AU_DIR="$GITHUB_WORKSPACE/au-assets"
+          mkdir -p "$AU_DIR"
           SYSUPGRADE_FILE=$(ls "$FIRMWARE"/*sysupgrade*.itb 2>/dev/null | head -n 1 || true)
           [ -z "$SYSUPGRADE_FILE" ] && SYSUPGRADE_FILE=$(ls "$FIRMWARE"/*sysupgrade* 2>/dev/null | head -n 1 || true)
           if [ -z "$SYSUPGRADE_FILE" ]; then
@@ -828,8 +834,8 @@ jobs:
             exit 1
           fi
           SYSUPGRADE_EXT="${SYSUPGRADE_FILE##*.}"
-          cp "$SYSUPGRADE_FILE" "$FIRMWARE/${PREFIX}-sysupgrade.${SYSUPGRADE_EXT}"
-          ( cd "$FIRMWARE" && sha256sum "${PREFIX}-sysupgrade.${SYSUPGRADE_EXT}" > "${PREFIX}-sysupgrade.${SYSUPGRADE_EXT}.sha256" )
+          cp "$SYSUPGRADE_FILE" "$AU_DIR/${PREFIX}-sysupgrade.${SYSUPGRADE_EXT}"
+          ( cd "$AU_DIR" && sha256sum "${PREFIX}-sysupgrade.${SYSUPGRADE_EXT}" > "${PREFIX}-sysupgrade.${SYSUPGRADE_EXT}.sha256" )
           echo "SYSUPGRADE_ASSET=${PREFIX}-sysupgrade.${SYSUPGRADE_EXT}" >> "$GITHUB_ENV"
           {
             echo "RUN_ID=${{ github.run_id }}"
@@ -837,9 +843,9 @@ jobs:
             echo "DEVICE=$DEVICE_MODEL"
             echo "BRANCH=$REPO_BRANCH"
             echo "RELEASE_TITLE=cm520_immortalwrt-24.10"
-          } > "$FIRMWARE/${PREFIX}-version.txt"
+          } > "$AU_DIR/${PREFIX}-version.txt"
           echo ">>> 值守升级固定资产："
-          ls -l "$FIRMWARE"/autoupdate-*
+          ls -l "$AU_DIR"/autoupdate-* || true
 
       - name: 上传 bin
         uses: actions/upload-artifact@main
@@ -944,7 +950,6 @@ jobs:
           files: |
             ${{ env.UPLOAD_ALL_FILES == 'true' && format('{0}/*', env.FIRMWARE) || format('{0}/*{{sysupgrade,initramfs}}*.*', env.FIRMWARE) }}
             ${{ env.FIRMWARE }}/sha256sums
-            ${{ env.FIRMWARE }}/autoupdate-*
 
       - name: 同步值守资产到固定 tag（autoupdate）
         if: steps.tag.outputs.status == 'success'
@@ -953,7 +958,13 @@ jobs:
         run: |
           gh release view autoupdate --repo ${{ github.repository }} >/dev/null 2>&1 || \
             gh release create autoupdate --repo ${{ github.repository }} --title "值守升级资产（固定地址，多设备共存）" --notes "各设备线 autoupdate-* 资产的固定下载地址（releases/download/autoupdate/），由各设备编译线发版后自动同步，勿删除本 Release。"
-          gh release upload autoupdate --repo ${{ github.repository }} --clobber ${{ env.FIRMWARE }}/autoupdate-*
+          shopt -s nullglob
+          AU_FILES=("${{ github.workspace }}"/au-assets/autoupdate-*)
+          if [ ${#AU_FILES[@]} -gt 0 ]; then
+            gh release upload autoupdate --repo ${{ github.repository }} --clobber "${AU_FILES[@]}"
+          else
+            echo "⚠️ au-assets 为空，跳过值守资产同步"
+          fi
           echo "值守资产已同步到固定 tag autoupdate"
 
       - name: 验证Release创建
