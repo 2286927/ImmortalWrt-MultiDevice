@@ -1,4 +1,4 @@
-﻿#!/bin/sh
+#!/bin/sh
 # ============================================================
 # OneCloud 在线升级脚本 v9（r13 固件起适用）
 # 路径2 A模式：SSH 一条命令在线升级，全程不拆机不接电脑
@@ -144,7 +144,13 @@ log "当前运行内核: $CUR_KV（升级后将被替换，属正常跨版本升
 mkdir -p "$WORK"
 FETCH="curl -sfL --connect-timeout 20 --max-time 300"
 # r26b: GitHub 直连失败时自动轮询加速镜像（2026-09-21 实机：raw.githubusercontent.com 挂死）
-GH_MIRRORS=" https://ghproxy.net https://gh-proxy.com https://ghfast.top https://gh.llkk.cc https://github.moeyy.xyz"
+# v9.14（2026-11-06 实测）：镜像分工不同，必须拆成两个列表。
+#   ghfast.top 下载最快（866KB/s），但不代理 api.github.com（实测 403）；
+#   gh-proxy.com 两者都支持（API 200 / 下载 416KB/s）；
+#   ghproxy.net 只代理下载且最慢（45KB/s），gh.llkk.cc 与 github.moeyy.xyz 实测不通。
+#   API/302 探测走 GH_MIRRORS_API，文件下载走 GH_MIRRORS（按实测速度排序）。
+GH_MIRRORS_API=" https://gh-proxy.com"
+GH_MIRRORS=" https://ghfast.top https://gh-proxy.com https://ghproxy.net https://gh.llkk.cc https://github.moeyy.xyz"
 try_fetch(){ # $1=输出文件 $2=github原始URL
   _out="$1"; _url="$2"
   rm -f "$_out"   # v9④: 清理旧的部分文件/残留，保证从零开始
@@ -167,7 +173,7 @@ if [ -n "${OPT_URL:-}" ]; then
   log "使用手动指定 URL（TAG=$TAG）"
 else
   log "探测最新 Release 资产地址（法1: GitHub API，直连+镜像轮询）…"
-  for _m in $GH_MIRRORS ""; do
+  for _m in $GH_MIRRORS_API ""; do
     if [ -z "$_m" ]; then _u="https://api.github.com/repos/$REPO/releases?per_page=30"; else _u="$_m/https://api.github.com/repos/$REPO/releases?per_page=30"; fi
     API_JSON=$(curl -sfL --connect-timeout 10 --max-time 60 "$_u" 2>/dev/null)
     [ -n "$API_JSON" ] || continue
@@ -181,7 +187,7 @@ else
   if [ -z "${URL_ROOTFS:-}" ]; then
     log "法1 未取到（匿名限流或网络），改用法2: releases/latest 302 重定向…"
     TAG=""
-    for _m in $GH_MIRRORS ""; do
+    for _m in $GH_MIRRORS_API ""; do
       if [ -z "$_m" ]; then _u="https://github.com/$REPO/releases/latest"; else _u="$_m/https://github.com/$REPO/releases/latest"; fi
       TAG=$(curl -sfIL --connect-timeout 10 "$_u" 2>/dev/null | sed -n 's|^[Ll]ocation:[ ]*[^ ]*/tag/||p' | head -n1 | tr -d '\r\n')
       [ -n "$TAG" ] && { log "TAG 探测成功（通道: ${_m:-直连}）"; break; }
