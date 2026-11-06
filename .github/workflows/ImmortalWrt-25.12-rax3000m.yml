@@ -867,9 +867,10 @@ jobs:
             [ -f "$file" ] || continue
             case "$file" in
               "${DEVICE_MODEL}_"*) continue ;;
-              # v9.14（2026-11-06）：本线只发 EMMC 刷机文件。
-              #   bin 目录同时产出 nand 的 preloader/fip，混进 release 会让 EMMC 机型刷错变砖。
-              *nand*) echo "SKIP nand boot file (EMMC line only): $file"; continue ;;
+              # v9.14（2026-11-06）：cmcc_rax3000m 这个 profile 一次编出 emmc 与 nand 两套
+              #   引导文件，供两种硬件按需取用——nand 的必须保留，不能过滤。原问题不是
+              #   “nand 混入”，而是 nand 也被重命名成 boot-<整串原名>，用户分不清该刷哪个。
+              #   下面把介质（emmc/nand）正确解析进文件名即可区分。
             esac
             # v9.14（2026-11-06）修正：原逻辑按文件名开头匹配 emmc/nand，
             #   但实际产物名是 immortalwrt-mediatek-filogic-cmcc_rax3000m-emmc-gpt.bin，
