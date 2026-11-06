@@ -1,4 +1,4 @@
-#!/bin/sh
+﻿#!/bin/sh
 # ============================================================
 # OneCloud 在线升级脚本 v9（r13 固件起适用）
 # 路径2 A模式：SSH 一条命令在线升级，全程不拆机不接电脑
@@ -55,7 +55,14 @@
 # ============================================================
 set -u
 
-REPO="2286927/ImmortalWrt-MultiDevice"
+# v9.13（2026-11-06 实机反馈）：检查仓库纠正。
+#   原 REPO 指向 ImmortalWrt-MultiDevice（多设备混合仓），该仓的 OneCloud 发布线
+#   已于 2026-10-31 之后停止更新；新的 OneCloud 固件统一发在
+#   2286927/onecloud-25.12-onlineFirmware。仍查旧仓会导致：
+#     ① 永远看不到 10-31 之后的新版本（--check 报"已是最新"）；
+#     ② 若版本比较失效还会把机器降级回 10-31 的旧包。
+#   脚本本体仍托管在 MultiDevice 的 scripts/onecloud/，只改固件探测源。
+REPO="2286927/onecloud-25.12-onlineFirmware"
 ASSET_ROOTFS="immortalwrt-amlogic-meson8b-thunder-onecloud-rootfs.tar.gz"
 ASSET_BOOT="onecloud-boot.tar.gz"
 WORK="/opt/rfs-upgrade"
