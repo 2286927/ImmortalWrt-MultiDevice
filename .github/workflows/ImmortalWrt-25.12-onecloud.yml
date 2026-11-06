@@ -243,6 +243,27 @@ jobs:
           mkdir -p files/etc/uci-defaults
           cp -f $GITHUB_WORKSPACE/scripts/onecloud/firstboot-rootfs-grow.sh files/etc/uci-defaults/99-rootfs-grow
           chmod 755 files/etc/uci-defaults/99-rootfs-grow
+          # r51: 日志卫生自愈（2026-11-06 实机巡检裁决）
+          #   出厂固件在无任何用户操作时即持续产生 err/crit，根因在出厂模板与包组合：
+          #     A9 crond 以 debug 级(5)运行 → 每分钟 4~5 行 cron.err，淹没真实错误
+          #     B5 system.log_proto='udp' 但无 log_ip → 孤儿远程 syslog 残留
+          #     A1 dnsmasq 绑定 docker0，restart 时争抢 172.17.0.1:<port> → daemon.crit（唯一 Critical）
+          #     A4 fstab 残留指向已不存在 UUID 的 mount 条目
+          #     A2 avahi-dbus-daemon 已装但 /etc/passwd 无 avahi 用户 → 服务反复崩溃(实测 7 次)
+          #     B2 nfs-kernel-server 启用但 exports 为空 → NFSD -110 + exportfs 报错，纯空转
+          #   脚本幂等/容错/仅在变更时写 flash，每次开机自愈——兜住上游 recipe(OneCloud_immortalwrt)
+          #   未同步修正的情况，确保新出厂固件不复现同类日志。
+          cp -f $GITHUB_WORKSPACE/scripts/onecloud/loghygiene files/etc/init.d/loghygiene
+          chmod 755 files/etc/init.d/loghygiene
+          cp -f $GITHUB_WORKSPACE/scripts/onecloud/99-loghygiene files/etc/uci-defaults/99-loghygiene
+          chmod 755 files/etc/uci-defaults/99-loghygiene
+          # 出厂 system 模板直接修正，不等首启自愈兜底
+          if [ -f ./files/etc/config/system ]; then
+            sed -i "s/option cronloglevel '5'/option cronloglevel '8'/" ./files/etc/config/system
+            sed -i "/option log_proto 'udp'/d" ./files/etc/config/system
+            grep -q "option cronloglevel '8'" ./files/etc/config/system || { echo "::error::system cronloglevel 修正失败"; exit 1; }
+            if grep -q "option log_proto" ./files/etc/config/system; then echo "::error::system log_proto 未清除"; exit 1; fi
+          fi
           # r31: LuCI 概览品牌四行（覆盖官方 10_system.js）
           mkdir -p files/www/luci-static/resources/view/status/include
           cp -f $GITHUB_WORKSPACE/scripts/onecloud/10_system.js files/www/luci-static/resources/view/status/include/10_system.js
@@ -366,6 +387,9 @@ jobs:
         run: |
           # r31 守卫: 新布局首启脚本与 LuCI 品牌文件必须在 files 就位
           test -x files/etc/uci-defaults/99-rootfs-grow || { echo "::error::99-rootfs-grow 未注入"; exit 1; }
+          test -x files/etc/init.d/loghygiene || { echo "::error::loghygiene 未注入"; exit 1; }
+          test -x files/etc/uci-defaults/99-loghygiene || { echo "::error::99-loghygiene 未注入"; exit 1; }
+          sh -n files/etc/init.d/loghygiene || { echo "::error::loghygiene 语法错误"; exit 1; }
           test -f files/www/luci-static/resources/view/status/include/10_system.js || { echo "::error::10_system.js 未注入"; exit 1; }
           make defconfig
           # r50 守卫: socat 必须带 OpenSSL（TLS 终结能力）
