@@ -60,7 +60,14 @@ jobs:
         run: |
           sudo -E apt-get -qq update --fix-missing
           sudo -E apt-get -qq full-upgrade
-          sudo -E apt-get -qq install -y $(curl -fsSL https://raw.githubusercontent.com/rmoyulong/AX6-Actions_Lede/master/Ubuntu-2410.txt)
+          # r50：依赖清单改为读仓库内文件，不再联网拉取外部 URL。
+          # 外部清单一挂或内容被改，构建就直接红；本地文件改动会留 git 记录。
+          DEPFILE="$GITHUB_WORKSPACE/config/Ubuntu-2410.txt"
+          test -f "$DEPFILE" || { echo "::error::依赖清单缺失：$DEPFILE"; exit 1; }
+          PKGS=$(grep -vE '^\s*#|^\s*$' "$DEPFILE" | tr '\n' ' ')
+          test -n "$PKGS" || { echo "::error::依赖清单为空：$DEPFILE"; exit 1; }
+          echo "依赖包数量: $(echo $PKGS | wc -w)"
+          sudo -E apt-get -qq install -y $PKGS
           sudo -E apt-get -qq install -y android-sdk-libsparse-utils dos2unix xz-utils
           sudo -E apt-get -qq autoremove --purge
           sudo -E apt-get -qq clean

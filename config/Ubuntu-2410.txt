@@ -1,0 +1,97 @@
+# OpenWrt 编译依赖清单（Ubuntu 24.04 / ubuntu-24.04 runner）
+#
+# 本文件是构建时的唯一来源，workflow 不再联网拉取外部清单。
+# 原始来源：rmoyulong/AX6-Actions_Lede 的 Ubuntu-2410.txt（共 83 项）。
+# 建本地副本的原因：外部 URL 一旦不可达或内容被改动，构建会直接失败或行为漂移。
+#
+# 格式约定：一行一个包名；以 # 开头为注释行；空行忽略。
+# workflow 读取方式（用 grep 去掉注释与空行，再拼成一行）：
+#   grep -vE '^\s*#|^\s*$' config/Ubuntu-2410.txt | tr '\n' ' '
+#
+# 更新方式：需要增删包时直接改本文件并提交，改动会留 git 记录。
+# 说明：clang/llvm、Java 编译链、文档生成链等条目是否在安装时剔除，
+# 由各 workflow 自行决定（例如 onecloud 线会额外过滤一遍），本文件保持完整。
+
+ack
+antlr3
+asciidoc
+autoconf
+automake
+autopoint
+binutils
+bison
+build-essential
+bzip2
+ccache
+clang
+cmake
+cpio
+curl
+device-tree-compiler
+ecj
+fastjar
+flex
+gawk
+gettext
+gcc-multilib
+g++-multilib
+git
+gnutls-dev
+gperf
+haveged
+help2man
+intltool
+lib32gcc-s1
+libc6-dev-i386
+libelf-dev
+libglib2.0-dev
+libgmp3-dev
+libltdl-dev
+libmpc-dev
+libmpfr-dev
+libncurses-dev
+libpython3-dev
+libreadline-dev
+libssl-dev
+libtool
+libyaml-dev
+libz-dev
+lld
+llvm
+lrzsz
+mkisofs
+msmtp
+nano
+ninja-build
+p7zip
+p7zip-full
+patch
+pkgconf
+python3
+python3-pip
+python3-ply
+python3-docutils
+python3-pyelftools
+qemu-utils
+re2c
+rsync
+scons
+squashfs-tools
+subversion
+swig
+texinfo
+uglifyjs
+upx-ucl
+unzip
+vim
+wget
+xmlto
+xxd
+zlib1g-dev
+zstd
+dos2unix
+libffi-dev
+pkg-config
+lib32z1-dev
+libpcre3
+libpcre3-dev
