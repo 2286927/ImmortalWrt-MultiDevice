@@ -321,7 +321,7 @@ jobs:
           #   导致 upgrade --check 只能靠 openwrt_release 的 (YYYY.MM.DD) 做日粒度比较，
           #   同一天多次编译的固件分不出新旧，可能出现“已是最新”却实际是旧包。
           mkdir -p files/etc
-          printf '%s\n' "$OWRT_DATE" > files/etc/oc-version
+          echo "${OWRT_DATE:?OWRT_DATE 未注入!}" > files/etc/oc-version
           echo "oc-version=$(cat files/etc/oc-version)"
                     mkdir -p files/usr/bin
           cat > files/usr/bin/upgrade << 'UPEOF'
