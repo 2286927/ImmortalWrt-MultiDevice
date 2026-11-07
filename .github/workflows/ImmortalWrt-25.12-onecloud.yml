@@ -279,6 +279,9 @@ jobs:
             sed -i "/option log_proto 'udp'/d" ./files/etc/config/system
             grep -q "option cronloglevel '8'" ./files/etc/config/system || { echo "::error::system cronloglevel 修正失败"; exit 1; }
             if grep -q "option log_proto" ./files/etc/config/system; then echo "::error::system log_proto 未清除"; exit 1; fi
+            # NTP: 不提供 server（sysntpd 不加 -l，不监听 123），避免公网 IPv6 暴露
+            sed -i "s/option enable_server '1'/option enable_server '0'/" ./files/etc/config/system
+            grep -q "option enable_server '0'" ./files/etc/config/system || { echo "::error::system enable_server 修正失败"; exit 1; }
           fi
           # r31: LuCI 概览品牌四行（覆盖官方 10_system.js）
           mkdir -p files/www/luci-static/resources/view/status/include
