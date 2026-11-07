@@ -271,16 +271,31 @@ jobs:
         working-directory: /workdir/openwrt
         timeout-minutes: 30
         run: |
-          echo "=== feeds 前磁盘 ==="; df -h . | tail -1
-          # r53: feeds 是外网 git 操作，无超时会静默悬挂。
-          #   实证 2026-11-07 run 42338915465：feeds update 卡 51 分钟后 job 失败、日志未归档。
-          #   加硬超时，把悬挂变成可诊断的快速失败。
-          timeout 1200 ./scripts/feeds update -a || { echo "::error::feeds update 超时或失败（限 1200s）"; df -h .; exit 1; }
-          bash $GITHUB_WORKSPACE/recipe/sh/RollbacktoDockerVersion.sh
-          # r8修复3: 25.12 feed dockerd 引用为 docker-v$(PKG_VERSION)，回滚 25.0.6 需还原 v 前缀（否则 codeload 404，哈希已实测匹配）
-          sed -i 's/PKG_GIT_REF:=docker-v/PKG_GIT_REF:=v/' feeds/packages/utils/dockerd/Makefile
-          timeout 900 ./scripts/feeds install -a || { echo "::error::feeds install 超时或失败（限 900s）"; exit 1; }
-          echo "=== feeds 后磁盘 ==="; df -h . | tail -1
+          # r54: 关掉 git 自动 gc/维护 —— gc 后台进程会继承 stdout 管道，
+          #   导致脚本已跑完而 GitHub 认为步骤未结束（run 42347873605 实证：日志已到末行 df，步骤仍 in_progress）。
+          git config --global gc.auto 0 || true
+          git config --global maintenance.auto false || true
+          export GIT_TERMINAL_PROMPT=0
+          FEEDS_LOG=/tmp/feeds.log
+          : > $FEEDS_LOG
+          set +e
+          (
+            set -e
+            echo "=== feeds 前磁盘 ==="; df -h . | tail -1
+            # r53: feeds 是外网 git 操作，无超时会静默悬挂。
+            #   实证 2026-11-07 run 42338915465：feeds update 卡 51 分钟后 job 失败、日志未归档。
+            #   加硬超时，把悬挂变成可诊断的快速失败。
+            timeout 1200 ./scripts/feeds update -a || { echo "::error::feeds update 超时或失败（限 1200s）"; df -h .; exit 1; }
+            bash $GITHUB_WORKSPACE/recipe/sh/RollbacktoDockerVersion.sh
+            # r8修复3: 25.12 feed dockerd 引用为 docker-v$(PKG_VERSION)，回滚 25.0.6 需还原 v 前缀（否则 codeload 404，哈希已实测匹配）
+            sed -i 's/PKG_GIT_REF:=docker-v/PKG_GIT_REF:=v/' feeds/packages/utils/dockerd/Makefile
+            timeout 900 ./scripts/feeds install -a || { echo "::error::feeds install 超时或失败（限 900s）"; exit 1; }
+            echo "=== feeds 后磁盘 ==="; df -h . | tail -1
+          ) >> $FEEDS_LOG 2>&1
+          RC=$?
+          set -e
+          cat $FEEDS_LOG
+          exit $RC
 
       - name: 加载自定义配置
         working-directory: /workdir/openwrt
