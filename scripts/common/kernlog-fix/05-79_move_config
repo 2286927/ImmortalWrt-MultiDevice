@@ -1,0 +1,38 @@
+#!/bin/sh
+# Copyright (C) 2012-2015 OpenWrt.org
+#
+# [kernlog-fix 2026-11-07] 修改点：
+#   原实现对该板 boot 分区写死 `mount -t ext4`。OneCloud 的 mmcblk1p1 是
+#   vfat（blkid: TYPE="vfat" UUID="6AE4-049A"），ext4 挂载必然失败，内核在
+#   ext4_fill_super() 用 KERN_ERR 打印 "VFS: Can't find ext4 filesystem"，
+#   于是每次开机都有一条 <3> 级内核错误（实机 7.5s 处，对应 bbox K2）。
+#   改为按 blkid 实际类型挂载；无文件系统（如 MBR 扩展分区壳）直接跳过，
+#   blkid 不可用时回退原 ext4 行为，保持与上游其他板型的兼容。
+move_config() {
+	local partdev
+	local fstype
+
+	. /lib/upgrade/common.sh
+
+	if export_bootdevice && export_partdevice partdev 1; then
+		mkdir -p /boot
+		fstype=""
+		command -v blkid >/dev/null 2>&1 && \
+			fstype="$(blkid -s TYPE -o value "/dev/$partdev" 2>/dev/null)"
+		case "$fstype" in
+			ext4|ext3|ext2|f2fs|btrfs|xfs|vfat|msdos) ;;
+			"")	fstype=ext4 ;;	# blkid 缺失：保持上游原行为
+			*)	return 0 ;;	# 无文件系统（扩展分区等）：不挂载、不报错
+		esac
+		[ "$fstype" = "msdos" ] && fstype=vfat
+		if mount -t "$fstype" -o ro,noatime "/dev/$partdev" /boot; then
+			if [ -f /boot/sysupgrade.tgz ]; then
+				mount /boot -o remount,rw,noatime
+				mv -f /boot/sysupgrade.tgz /
+				mount /boot -o remount,ro,noatime
+			fi
+		fi
+	fi
+}
+
+boot_hook_add preinit_mount_root move_config

@@ -1,0 +1,13 @@
+--- a/arch/arm/mm/cache-l2x0.c
++++ b/arch/arm/mm/cache-l2x0.c
+@@ -640,7 +640,7 @@ static void __init l2c310_enable(void __iomem *base, unsigned num_lock)
+ 		if (!(aux & L310_AUX_CTRL_FULL_LINE_ZERO) && !outer_cache.write_sec) {
+ 			aux |= L310_AUX_CTRL_FULL_LINE_ZERO;
+ 			pr_info("L2C-310 full line of zeros enabled for Cortex-A9\n");
+ 		}
+ 	} else if (aux & (L310_AUX_CTRL_FULL_LINE_ZERO | L310_AUX_CTRL_EARLY_BRESP)) {
+-		pr_err("L2C-310: disabling Cortex-A9 specific feature bits\n");
++		pr_info("L2C-310: disabling Cortex-A9 specific feature bits\n");
+ 		aux &= ~(L310_AUX_CTRL_FULL_LINE_ZERO | L310_AUX_CTRL_EARLY_BRESP);
+ 	}
+ 

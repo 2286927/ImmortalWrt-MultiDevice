@@ -1,0 +1,29 @@
+--- a/block.c
++++ b/block.c
+@@ -172,10 +172,22 @@ static struct uci_package * config_try_load(struct uci_context *ctx, char *path)
+ 	uci_set_confdir(ctx, dir);
+ 	ULOG_INFO("attempting to load %s/%s\n", dir, file);
+ 
+ 	if (uci_load(ctx, file, &pkg)) {
+ 		uci_get_errorstr(ctx, &err, file);
+-		ULOG_ERR("unable to load configuration (%s)\n", err);
++
++		/*
++		 * [kernlog-fix 2026-11-07]
++		 * 配置搜索顺序前两级是 overlay 路径（/tmp/overlay[/upper]/etc/config/fstab）。
++		 * 根文件系统为 ext4 直读、未使用 overlayfs 的系统上这两级恒不存在，
++		 * 每级都会以 LOG_ERR 记一条 "unable to load configuration (Entry not found)"，
++		 * 每次开机固定产生 2 条 user.err（实机 25.12 / OneCloud 验证）。
++		 * 文件不存在属预期 -> debug；文件存在却解析失败才是真问题 -> 仍保留 err。
++		 */
++		FILE *fp = fopen(path, "r");
++		if (fp) {
++			fclose(fp);
++			ULOG_ERR("unable to load configuration (%s)\n", err);
++		} else {
++			ULOG_DBG("configuration not present: %s\n", path);
++		}
+ 
+ 		free(err);
+ 		return NULL;
+ 	}
