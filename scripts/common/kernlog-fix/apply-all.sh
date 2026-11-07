@@ -11,6 +11,17 @@
 # =================================================================================================
 set -u
 
+# -------------------------------------------------------------------------------------------------
+# 路径约定（两个根不是同一个，必须分开取）：
+#   SRC_ROOT  = 当前工作目录 = OpenWrt 源码树（workflow 里是 /workdir/openwrt）
+#               target/linux、package/base-files、feeds 都在它下面
+#   REPO_ROOT = 本脚本所在仓库根 = scripts/common/kernlog-fix 往上三级
+#               recipe/ 在这里（UP 仓为 git clone 的实体目录，MD 仓为 tar 解压产物）
+# -------------------------------------------------------------------------------------------------
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
+SRC_ROOT="$(pwd)"
+
 FAIL=0
 OK=0
 
@@ -26,7 +37,7 @@ fail() { FAIL=$((FAIL+1)); echo "[kernlog-fix][WARN] $*"; }
 #       cgroup v2 下 /sys/fs/cgroup/memory.swap.max 不存在 → dockerd 报
 #       "WARNING: No swap limit support"，容器 swap 限制失效
 # -------------------------------------------------------------------------------------------------
-TARGET_DIR="target/linux/amlogic"
+TARGET_DIR="$SRC_ROOT/target/linux/amlogic"
 if [ -d "$TARGET_DIR" ]; then
 	# U3：内核 config（同时覆盖 target 根与 subtarget 两种布局）
 	_found_cfg=0
@@ -46,15 +57,15 @@ if [ -d "$TARGET_DIR" ]; then
 
 	# U3 兜底：同步写进 .config（defconfig 后仍生效）
 	for _sym in CONFIG_KERNEL_MEMCG_SWAP; do
-		grep -q "^${_sym}=" .config 2>/dev/null || echo "${_sym}=y" >> .config 2>/dev/null
+		grep -q "^${_sym}=" "$SRC_ROOT/.config" 2>/dev/null || echo "${_sym}=y" >> "$SRC_ROOT/.config" 2>/dev/null
 	done
 
 	# K1：内核补丁
 	_pdir="$TARGET_DIR/patches-6.12"
 	[ -d "$_pdir" ] || _pdir="$TARGET_DIR/generic/patches-6.12"
 	[ -d "$_pdir" ] || { mkdir -p "$TARGET_DIR/patches-6.12"; _pdir="$TARGET_DIR/patches-6.12"; }
-	if [ -f "$(dirname "$0")/02-kernel-patch-l2c310.patch" ]; then
-		cp "$(dirname "$0")/02-kernel-patch-l2c310.patch" "$_pdir/999-l2c310-loglevel.patch"
+	if [ -f "$HERE/02-kernel-patch-l2c310.patch" ]; then
+		cp "$HERE/02-kernel-patch-l2c310.patch" "$_pdir/999-l2c310-loglevel.patch"
 		ok "K1 内核补丁已放入 $_pdir"
 	else
 		fail "K1 缺少 02-kernel-patch-l2c310.patch"
@@ -69,14 +80,14 @@ fi
 #   "VFS: Can't find ext4 filesystem"。改为按 blkid 实际类型挂载。
 #   副作用（正向）：原脚本对本板从未成功挂载过 /boot，sysupgrade.tgz 恢复链实际是断的，修复后可用。
 # -------------------------------------------------------------------------------------------------
-_bfl="package/base-files/files/lib/preinit/79_move_config"
-if [ -f "$(dirname "$0")/05-79_move_config" ]; then
+_bfl="$SRC_ROOT/package/base-files/files/lib/preinit/79_move_config"
+if [ -f "$HERE/05-79_move_config" ]; then
 	if [ -f "$_bfl" ]; then
 		if grep -q 'blkid -s TYPE' "$_bfl"; then
 			ok "K2 79_move_config 已是修复版"
 		else
 			cp "$_bfl" "$_bfl.orig-kernlog" 2>/dev/null
-			cp "$(dirname "$0")/05-79_move_config" "$_bfl"
+			cp "$HERE/05-79_move_config" "$_bfl"
 			chmod 755 "$_bfl"
 			ok "K2 79_move_config 已替换为按 fs 类型挂载版本"
 		fi
@@ -93,7 +104,7 @@ fi
 #   （停 dockerd 期间不出现，启动即出现，证明在 dockerd 进程内）。
 #   用官方 build tag exclude_graphdriver_aufs 把 aufs driver 排除出编译产物。
 # -------------------------------------------------------------------------------------------------
-_dk="feeds/packages/utils/dockerd/Makefile"
+_dk="$SRC_ROOT/feeds/packages/utils/dockerd/Makefile"
 if [ -f "$_dk" ]; then
 	if grep -q 'exclude_graphdriver_aufs' "$_dk"; then
 		ok "U2 dockerd 已含 exclude_graphdriver_aufs"
@@ -120,12 +131,12 @@ fi
 #      验证通过后再 export ENABLE_FSTOOLS_PATCH=1 重跑本脚本；
 #      未启用时该 2 条日志请纳入出厂白名单（它们是非 overlayfs 系统的通用行为）。
 # -------------------------------------------------------------------------------------------------
-_fp="package/system/fstools/patches"
+_fp="$SRC_ROOT/package/system/fstools/patches"
 if [ "${ENABLE_FSTOOLS_PATCH:-0}" = "1" ]; then
-	if [ -d "package/system/fstools" ]; then
+	if [ -d "$SRC_ROOT/package/system/fstools" ]; then
 		mkdir -p "$_fp"
-		if [ -f "$(dirname "$0")/03-fstools-quiet-missing-fstab.patch" ]; then
-			cp "$(dirname "$0")/03-fstools-quiet-missing-fstab.patch" "$_fp/100-quiet-missing-fstab.patch"
+		if [ -f "$HERE/03-fstools-quiet-missing-fstab.patch" ]; then
+			cp "$HERE/03-fstools-quiet-missing-fstab.patch" "$_fp/100-quiet-missing-fstab.patch"
 			ok "U1 fstools 补丁已放入 $_fp（已显式启用，请确认 dry-run 通过）"
 		else
 			fail "U1 缺少 03-fstools-quiet-missing-fstab.patch"
@@ -144,15 +155,15 @@ fi
 # 注：两个配置文件与脚本同目录扁平存放（06-system / 06-dockerd），
 #     因为 GitHub 网页上传不保留子目录结构，扁平命名才能一次传完。
 # -------------------------------------------------------------------------------------------------
-_rc="$(dirname "$0")"
-_rdir="recipe/onecloud/files/etc/config"
+_rc="$HERE"
+_rdir="$REPO_ROOT/recipe/onecloud/files/etc/config"
 if [ -d "$_rdir" ]; then
 	[ -f "$_rc/06-dockerd" ] && cp "$_rc/06-dockerd" "$_rdir/dockerd" && ok "U2 recipe dockerd 已固化 storage_driver=overlay2"
 	[ -f "$_rc/06-system" ] && cp "$_rc/06-system" "$_rdir/system" && ok "U5/U6 recipe system 已固化 cronloglevel=8"
 	[ -f "$_rc/06-dockerd" ] || fail "缺少 06-dockerd"
 	[ -f "$_rc/06-system" ] || fail "缺少 06-system"
 else
-	fail "未找到 recipe/onecloud/files/etc/config，recipe 配置未固化"
+	fail "未找到 $REPO_ROOT/recipe/onecloud/files/etc/config，recipe 配置未固化"
 fi
 
 # -------------------------------------------------------------------------------------------------
