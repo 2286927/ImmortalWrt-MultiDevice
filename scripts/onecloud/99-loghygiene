@@ -8,9 +8,14 @@
 #
 # 幂等：可重复执行；loghygiene 内部无变更时不写 flash。
 # 容错：任何一步失败都不影响首启流程（恒定 exit 0）。
+#
+# 注：GitHub 网页上传会使仓库内文件丢失执行位（实测为 100644）。本启动器自身不需要执行位
+#     （uci-defaults 以 `.` source 方式执行），但被它调用的 /etc/init.d/loghygiene 需要。
+#     故此处用 [ -f ] 判存在、并主动 chmod 补权限，避免因缺执行位而静默跳过自愈。
 #==================================================================================================
 
-[ -x /etc/init.d/loghygiene ] && {
+[ -f /etc/init.d/loghygiene ] && {
+	[ -x /etc/init.d/loghygiene ] || chmod 755 /etc/init.d/loghygiene 2>/dev/null
 	/etc/init.d/loghygiene enable >/dev/null 2>&1
 	/etc/init.d/loghygiene start  >/dev/null 2>&1
 }

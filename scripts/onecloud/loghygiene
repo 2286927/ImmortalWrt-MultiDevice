@@ -54,9 +54,16 @@ _log() {
 #   造成"进程没停干净"的假告警（实机已出现 `stop 后 5s 仍在运行 (pid N)` 的误报，其中 N
 #   极可能就是这种子壳而非 chronyd 本体）。所以 comm 只能用来缩小候选集，不能当结论。
 #
-# 最终判据：/proc/<pid>/cmdline 的第一个参数必须是该守护进程本体 —— /usr/sbin/<name>，
-# 或裸 <name>（用于 ujail 等 argv[0] 被改写成短名的情形）。rc.common 子壳的 cmdline[0]
-# 是 /bin/sh，据此可稳定排除。
+# 最终判据：/proc/<pid>/cmdline 的第一个参数的 basename 必须等于 <name>。
+# 不写死安装路径：chronyd/ntpd 可能在 /usr/sbin、/sbin 或 /usr/bin（不同固件/包布局），
+# 写死 /usr/sbin/ 会在非标准布局上把真实残留判成"干净"，静默跳过 stop 且不写任何日志。
+# rc.common 子壳的 cmdline[0] 是 /bin/sh（basename=sh），僵尸 cmdline 为空，据此均被排除。
+#
+# 判据只认可执行本体：ujail 以 exec 方式拉起真身（非 fork-only 壳），故"仅存在包装层
+# 而无本体"在结构上不可能，无需为 ujail 增加例外分支（加了反而会在"包装层存活、本体
+# 已死"时制造假阳性）。status 的 ntpd running 可靠，是因为真身 argv[0] 的 basename 为
+# ntpd（实测 /usr/sbin/ntpd），而包装层的 /sbin/ujail 被 basename 判据排除 —— 与安装
+# 路径无关，勿据此把上面的判定改回硬编码路径。
 #
 # _proc_pids    ：输出确认为本体的 PID（空格分隔）；无匹配返回 1
 # _proc_running ：存活布尔判定（B6 / status 用）
@@ -75,8 +82,8 @@ _proc_pids() {
 	_c_hit=""
 	for _c_p in $_cand; do
 		_c_a0=$(tr '\0' '\n' < "/proc/$_c_p/cmdline" 2>/dev/null | head -1)
-		case "$_c_a0" in
-			"/usr/sbin/$1" | "$1") _c_hit="$_c_hit $_c_p" ;;
+		case "${_c_a0##*/}" in
+			"$1") _c_hit="$_c_hit $_c_p" ;;
 		esac
 	done
 	[ -n "$_c_hit" ] || return 1
