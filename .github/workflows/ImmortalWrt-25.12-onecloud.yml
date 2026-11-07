@@ -27,6 +27,10 @@ on:
         description: 'SSH connection to Actions'
         required: false
         default: 'false'
+      force_build:
+        description: '强制构建（false=仅在源码/配方/配置有变化时构建）'
+        required: false
+        default: 'true'
   schedule:
     - cron: "30 19 * * 5"
 
@@ -45,10 +49,49 @@ env:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
+  check-updates:
+    name: 检测源码/配方是否更新
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+      fingerprint: ${{ steps.fp.outputs.fingerprint }}
+    steps:
+      - name: 计算三源指纹
+        id: fp
+        run: |
+          set -eu
+          UP_SHA=$(git ls-remote "${{ env.REPO_URL }}" "refs/heads/${{ env.REPO_BRANCH }}" | cut -f1)
+          LEDE_SHA=$(git ls-remote https://github.com/coolsnowwolf/lede refs/heads/master | cut -f1)
+          SELF_SHA="${{ github.sha }}"
+          [ -n "$UP_SHA" ] && [ -n "$LEDE_SHA" ] || { echo "::error::上游 HEAD 解析失败"; exit 1; }
+          FP=$(printf '%s\n%s\n%s\n' "$UP_SHA" "$LEDE_SHA" "$SELF_SHA" | sha256sum | cut -c1-32)
+          echo "上游=$UP_SHA  lede=$LEDE_SHA  本仓=$SELF_SHA"
+          echo "fingerprint=$FP" >> $GITHUB_OUTPUT
+
+      - name: 指纹比对（缓存 key 即指纹，命中=无更新）
+        id: fpc
+        uses: actions/cache/restore@v5
+        with:
+          path: .fp
+          key: fp-${{ env.REPO_BRANCH }}-${{ steps.fp.outputs.fingerprint }}
+
+      - name: 判定是否构建
+        id: decide
+        run: |
+          E='${{ github.event_name }}'; F='${{ inputs.force_build }}'; H='${{ steps.fpc.outputs.cache-hit }}'
+          GO=true
+          if [ "$H" = "true" ] && { [ "$E" = "schedule" ] || { [ "$E" = "workflow_dispatch" ] && [ "$F" = "false" ]; }; }; then GO=false; fi
+          echo "should_build=$GO" >> $GITHUB_OUTPUT
+          echo ">>> should_build=$GO（事件=$E 指纹命中=$H force=$F）"
+
   build-onecloud:
     name: 玩客云 amlogic 直刷固件
+    needs: check-updates
+    if: always() && needs.check-updates.outputs.should_build != 'false'
     runs-on: ubuntu-24.04
     steps:
       - name: 清理服务器空间(Ubuntu)
@@ -92,6 +135,8 @@ jobs:
           export OWRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
           echo "OWRT_DATE=$OWRT_DATE" >> $GITHUB_ENV
           echo "OWRT_SERVER_IP=${OWRT_IP%.*}.1" >> $GITHUB_ENV
+          # ccache 固定落在 TOPDIR 内（= cachewrtbuild 已缓存的 openwrt/.ccache，零新增缓存条目）
+          echo "CCACHE_DIR=/workdir/openwrt/.ccache" >> $GITHUB_ENV
 
       - name: 克隆源仓库
         working-directory: /workdir
@@ -182,6 +227,15 @@ jobs:
           prefix: ${{ github.workspace }}/openwrt
           mixkey: amlogic6.6/tree/${{ env.REPO_BRANCH }}?device=quicker-amlogic-2512
 
+      - name: 配置 ccache 上限
+        working-directory: /workdir/openwrt
+        run: |
+          mkdir -p .ccache
+          printf 'max_size = 1.0G\ncompression = true\n' > .ccache/ccache.conf
+          echo "=== ccache 目录现状（首跑为 0，第 2 次起应 ≥1G）==="
+          du -sh .ccache
+          df -h . | tail -1
+
       - name: 安装订阅源
         working-directory: /workdir/openwrt
         run: |
@@ -212,6 +266,11 @@ jobs:
 
           rm -rf ./tmp* ./.config*
           cp $GITHUB_WORKSPACE/${{ env.OWRT_CFG }} .config
+          # 启用 ccache：保留 CONFIG_CCACHE_DIR="" → include/ccache.mk 回落到 $(TOPDIR)/.ccache
+          # 即 /workdir/openwrt/.ccache，正好是 cachewrtbuild 已缓存的 openwrt/.ccache（同一 inode，零新增条目）
+          sed -i '/^CONFIG_CCACHE=/d;/^CONFIG_CCACHE_DIR=/d' .config
+          echo 'CONFIG_CCACHE=y' >> .config
+          echo 'CONFIG_CCACHE_DIR=""' >> .config
           # r51: socat OpenSSL 显式预置（本线走 lean2.sh 配方，不经过 scripts/*/diy-part2.sh 的 1h 门禁；
           #   quicker-amlogic.config 只选 luci-app-socat，socat 由其依赖拉入，CONFIG_SOCAT_SSL 无默认值 → 恒 not set；
           #   packages feed net/socat/Makefile 在 SOCAT_SSL!=y 时传 --disable-openssl，编出的 socat 无 TLS 能力）
@@ -427,6 +486,17 @@ jobs:
           sh -n files/etc/init.d/loghygiene || { echo "::error::loghygiene 语法错误"; exit 1; }
           test -f files/www/luci-static/resources/view/status/include/10_system.js || { echo "::error::10_system.js 未注入"; exit 1; }
           make defconfig
+          # ccache 落地守卫：defconfig 重算后必须仍为 y，且目录必须在构建目录内（否则收益全丢）
+          if ! grep -qx 'CONFIG_CCACHE=y' .config; then
+            echo 'CONFIG_CCACHE=y' >> .config
+            make defconfig >/dev/null 2>&1 || true
+          fi
+          grep -qx 'CONFIG_CCACHE=y' .config || { echo "::error::CONFIG_CCACHE 未能保持 =y，ccache 不生效"; exit 1; }
+          _ccd=$(sed -n 's/^CONFIG_CCACHE_DIR="\(.*\)"$/\1/p' .config)
+          case "$_ccd" in
+            ""|"/workdir/openwrt/.ccache") echo "PASS⑱ ccache 已启用，CCACHE_DIR=[${_ccd:-默认 TOPDIR/.ccache}]" ;;
+            *) echo "::error::CONFIG_CCACHE_DIR=[$_ccd] 不在缓存路径内，收益会全部丢失"; exit 1 ;;
+          esac
           # r50 守卫: socat 必须带 OpenSSL（TLS 终结能力）
           #   packages feed 的 net/socat/Makefile 在 CONFIG_SOCAT_SSL!=y 时传 --disable-openssl，
           #   编出的 socat -V 会显示 #undef WITH_OPENSSL，OPENSSL-LISTEN/CONNECT 不可用。
@@ -533,15 +603,73 @@ jobs:
           done
           grep -q '^CONFIG_PACKAGE_lighttpd=y' .config && { echo "::error::lighttpd 被依赖链拉回（真硬依赖需人工裁决：改端口 8080 方案）"; grep -E '^CONFIG_PACKAGE_lighttpd' .config; exit 1; }
           echo "=== lighttpd 剔除守卫通过（80 端口归还 uhttpd） ==="
-          make download -j$(nproc)
+          make download -j8
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
 
       - name: 编译固件
         working-directory: /workdir/openwrt
+        timeout-minutes: 300
         run: |
           echo -e "$(nproc) thread compile"
-          make -j$(nproc) || make -j1 || make -j1 V=s
+          export CCACHE_DIR=/workdir/openwrt/.ccache
+          : > build.log
+          set +e
+          stdbuf -oL -eL make -j$(nproc) 2>&1 | stdbuf -oL tee build.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          # 兜底只认内存耗尽：其余失败重跑 -j1 只会把 108min 变 216min，还把真因埋掉
+          if [ "$RC" -ne 0 ] && grep -qE 'virtual memory exhausted|internal compiler error: Killed|Killed signal|Cannot allocate memory|out of memory' build.log; then
+            echo "::warning::疑似内存耗尽（rc=$RC），降 -j1 重试，日志追加"
+            set +e
+            stdbuf -oL -eL make -j1 2>&1 | stdbuf -oL tee -a build.log
+            RC=${PIPESTATUS[0]}
+            set -e
+          fi
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::编译失败 rc=$RC，build.log 末尾 200 行："
+            tail -n 200 build.log
+            exit "$RC"
+          fi
+          echo ">>> 编译完成，build.log 行数: $(wc -l < build.log)"
+
+      - name: ccache 统计与构建摘要
+        if: always()
+        working-directory: /workdir/openwrt
+        run: |
+          export CCACHE_DIR=/workdir/openwrt/.ccache
+          CC=""
+          if [ -x staging_dir/host/bin/ccache ]; then CC=./staging_dir/host/bin/ccache
+          elif command -v ccache >/dev/null 2>&1; then CC=ccache; fi
+          if [ -n "$CC" ]; then
+            echo "=== ccache 目录 ==="; du -sh "$CCACHE_DIR" 2>/dev/null || echo 0
+            echo "=== ccache -s ==="; "$CC" -s || true
+          else
+            echo "::warning::未找到 ccache 二进制（编译前失败时属正常）"
+          fi
+          {
+            echo "## 构建摘要"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 分支 | ${REPO_BRANCH} |"
+            echo "| 版本戳 | ${OWRT_DATE} |"
+            for _f in outfile/*.tar.gz outfile/*.tar outfile/*.img.xz; do
+              [ -f "$_f" ] && echo "| 产物 | $(basename "$_f") ($(du -h "$_f" | cut -f1)) |"
+            done
+            echo "| ccache 体积 | $(du -sh "$CCACHE_DIR" 2>/dev/null | cut -f1) |"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: 上传编译日志（失败时）
+        if: failure()
+        uses: actions/upload-artifact@main
+        with:
+          name: build-log-onecloud-${{ env.REPO_BRANCH }}-${{ env.OWRT_DATE }}
+          path: |
+            openwrt/build.log
+            openwrt/.config
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: r36 终检（线刷病灶八断言）
         working-directory: /workdir/openwrt
@@ -623,6 +751,44 @@ jobs:
             默认密码：空（root 无密码；SSH 空密码直连，LuCI 任意密码进入）
             默认地址：${{ env.OWRT_IP }}
           artifacts: "openwrt/outfile/*"
+
+      - name: 缓存额度治理
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          R="${{ github.repository }}"; BR="${REPO_BRANCH}"
+          echo "=== 治理前 ==="
+          gh cache list --repo "$R" --limit 100 || true
+          # ① dl：同分支只留最新（跨月旧条目是最大浪费）
+          gh cache list --repo "$R" --limit 100 --json id,key,createdAt \
+            -q "sort_by(.createdAt)|reverse|.[]|select(.key|startswith(\"dl-${BR}-\"))|.id" | tail -n +2 \
+            | while read -r id; do echo "删 dl 旧条目 $id"; gh cache delete "$id" --repo "$R" || true; done
+          # ② cachewrtbuild 条目：key 含 run_id，每轮新增一条，只留最新
+          gh cache list --repo "$R" --limit 100 --json id,key,createdAt \
+            -q 'sort_by(.createdAt)|reverse|.[]|select(.key|startswith("amlogic6.6/"))|.id' | tail -n +2 \
+            | while read -r id; do echo "删 cachewrtbuild 旧条目 $id"; gh cache delete "$id" --repo "$R" || true; done
+          # ③ 指纹只留最近 6 条
+          gh cache list --repo "$R" --limit 100 --json id,key,createdAt \
+            -q 'sort_by(.createdAt)|reverse|.[]|select(.key|startswith("fp-"))|.id' | tail -n +7 \
+            | while read -r id; do gh cache delete "$id" --repo "$R" || true; done
+          echo "=== 治理后 ==="
+          gh cache list --repo "$R" --limit 100 || true
+
+      - name: 记录源码指纹（仅全流程成功）
+        if: success() && needs.check-updates.outputs.fingerprint != ''
+        run: |
+          mkdir -p .fp
+          echo "${{ needs.check-updates.outputs.fingerprint }}" > .fp/fingerprint
+          cat .fp/fingerprint
+
+      - name: 保存源码指纹
+        if: success() && needs.check-updates.outputs.fingerprint != ''
+        uses: actions/cache/save@v5
+        with:
+          path: .fp
+          key: fp-${{ env.REPO_BRANCH }}-${{ needs.check-updates.outputs.fingerprint }}
 
       - name: SSH 调试
         if: failure() && inputs.ssh == 'true'
