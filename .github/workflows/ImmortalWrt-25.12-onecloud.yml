@@ -413,6 +413,10 @@ jobs:
           test -s files/usr/bin/upgrade || { echo "::error::upgrade 命令注入失败"; exit 1; }
           grep -q '    --check) ;;' files/usr/bin/upgrade || { echo "::error::upgrade heredoc TAB 转义损坏"; exit 1; }
 
+      - name: 内核/启动期日志修复（kernlog-fix）
+        working-directory: /workdir/openwrt
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/common/kernlog-fix/apply-all.sh"
       - name: 下载编译环境
         working-directory: /workdir/openwrt
         run: |
