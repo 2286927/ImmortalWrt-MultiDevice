@@ -183,6 +183,18 @@ jobs:
           rm -rf package/OpenWrt-nikki
           rm -rf ./tmp* ./.config*
           cp $GITHUB_WORKSPACE/${{ env.OWRT_CFG }} .config
+          # r51: socat OpenSSL 显式预置（本线走 lean2.sh 配方，不经过 scripts/*/diy-part2.sh 的 1h 门禁；
+          #   quicker-amlogic.config 只选 luci-app-socat，socat 由其依赖拉入，CONFIG_SOCAT_SSL 无默认值 → 恒 not set；
+          #   packages feed net/socat/Makefile 在 SOCAT_SSL!=y 时传 --disable-openssl，编出的 socat 无 TLS 能力）
+          #   放在 defconfig 之前，让 kconfig 从一开始就继承 y，避免事后补写被重算覆盖
+          if grep -qx 'CONFIG_PACKAGE_luci-app-socat=y' .config || grep -qx 'CONFIG_PACKAGE_socat=y' .config; then
+            grep -qx 'CONFIG_PACKAGE_socat=y' .config || echo 'CONFIG_PACKAGE_socat=y' >> .config
+            sed -i '/^# CONFIG_SOCAT_SSL is not set$/d' .config
+            grep -qx 'CONFIG_SOCAT_SSL=y' .config || echo 'CONFIG_SOCAT_SSL=y' >> .config
+            sed -i '/^# CONFIG_PACKAGE_libopenssl is not set$/d' .config
+            grep -qx 'CONFIG_PACKAGE_libopenssl=y' .config || echo 'CONFIG_PACKAGE_libopenssl=y' >> .config
+            echo ">>> socat OpenSSL 预置: $(grep -E '^CONFIG_(PACKAGE_socat|SOCAT_SSL|PACKAGE_libopenssl)=' .config | tr '\n' ' ')"
+          fi
           # r13.4: qmodem 全家显式禁用兜底（包源已剔除，防 config 显式选中残留）
           sed -i -E 's/^CONFIG_PACKAGE_(qmodem|luci-app-qmodem|luci-app-qmodem-next)=y$/# CONFIG_PACKAGE_\1 is not set/' .config
           # 用户决策弃用 fw3+legacy（与 25.12 对齐）：删除 legacy 后端用户态工具链，iptables 统一 nft 后端；
@@ -226,8 +238,17 @@ jobs:
           #   编出的 socat -V 会显示 #undef WITH_OPENSSL，OPENSSL-LISTEN/CONNECT 不可用。
           #   本守卫放在 make defconfig 之后，兜住依赖重新求解。
           if grep -qx 'CONFIG_PACKAGE_socat=y' .config; then
+            # 自愈一轮：defconfig 依赖重算若把 SOCAT_SSL 推回 not set，补写后重算一次再判
             if ! grep -qx 'CONFIG_SOCAT_SSL=y' .config || ! grep -qx 'CONFIG_PACKAGE_libopenssl=y' .config; then
-              echo "::error::socat 已选但缺 OpenSSL 支持，TLS 终结不可用"
+              echo ">>> 守卫自愈：defconfig 未保住 socat OpenSSL，补写后重算"
+              sed -i '/^# CONFIG_SOCAT_SSL is not set$/d' .config
+              grep -qx 'CONFIG_SOCAT_SSL=y' .config || echo 'CONFIG_SOCAT_SSL=y' >> .config
+              sed -i '/^# CONFIG_PACKAGE_libopenssl is not set$/d' .config
+              grep -qx 'CONFIG_PACKAGE_libopenssl=y' .config || echo 'CONFIG_PACKAGE_libopenssl=y' >> .config
+              make defconfig >/dev/null 2>&1 || true
+            fi
+            if ! grep -qx 'CONFIG_SOCAT_SSL=y' .config || ! grep -qx 'CONFIG_PACKAGE_libopenssl=y' .config; then
+              echo "::error::socat 已选但缺 OpenSSL 支持，TLS 终结不可用（自愈一轮后仍未生效）"
               grep -E '^#? ?CONFIG_(SOCAT_SSL|PACKAGE_libopenssl)|^CONFIG_PACKAGE_socat=' .config || true
               exit 1
             fi
