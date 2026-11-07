@@ -8,7 +8,9 @@
 #       兜底，确保即使上游 recipe 未同步修正，新出厂固件也不再复现相同问题。
 #
 # 处置项（与实机验证报告一一对应）：
-#   A9  crond 以 debug 级(5)运行 → 每分钟刷 4~5 行 cron.err，淹没真实错误，挤占 64KB 环形缓冲
+#   A9  system.cronloglevel 固定为 8：busybox crond 的 -l 数值越大越精简，
+#       8 是实测三档中最少的一档（每任务 1 行）；但无法彻底消除，
+#       因为 crond 对全部消息统一用 LOG_ERR 输出
 #   B5  system.log_proto='udp' 但无 log_ip → 孤儿远程 syslog 残留，削弱本地日志
 #   A1  dnsmasq 绑定 docker0(172.17.0.1)，restart 时新旧实例争抢端口 → daemon.crit 启动失败
 #   A4  fstab 残留指向已不存在 UUID 的 mount 条目 → 每次开机 block 探测报错
@@ -96,7 +98,17 @@ _proc_running() {
 
 start() {
 	#------------------------------------------------------------------
-	# A9: crond 日志级别 5(debug) → 8(error)
+	# A9: crond 日志级别固定为 8
+	#
+	# 实测依据（2026-11-07，同一台 OneCloud，插入 `* * * * * /bin/true` 后观测 75 秒）：
+	#   -l 0 → 每次任务刷出 wakeup/file/line/job/child/USER 等 7+ 行，最吵
+	#   -l 5 → 同样刷 file/line/job/child/USER，75 秒新增 12 条 cron.err
+	#   -l 8 → 每个任务只留 1 行 "USER root pid N cmd ..."，为三档中最少
+	# 即 busybox 1.37 的 -l 是"保留 >= 该数值的详细度"，数值越大越精简，与常见
+	# syslog 级别直觉相反；原注释写成 "5(debug) → 8(error)" 但结论恰好正确。
+	# 注意：无法通过该开关彻底消除 —— busybox crond 对全部 cron 消息统一使用
+	# LOG_ERR 输出，任何档位都会落在 cron.err。彻底消除需改 busybox crond.c 的
+	# syslog 优先级（见出厂补丁包 README 的 U5/U6 可选方案）。
 	#------------------------------------------------------------------
 	_cur=$(uci -q get system.@system[0].cronloglevel)
 	if [ "$_cur" != "8" ]; then
