@@ -109,11 +109,26 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: 初始化编译环境
+        timeout-minutes: 30
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          # r52（对齐 UP r48）：抑制 needrestart。
+          #   apt 结束后它会主动重启服务，子进程占住 stdout 管道不放，表现在 GitHub 侧是：
+          #   脚本已执行完（末行 df -Th 正常输出）、日志不再前进、步骤永远 in_progress、
+          #   最终 job 收尾空转被判失败且日志 blob 不归档。
+          #   实证：2026-11-07 run 42337618785 第 4 步卡住 8 分钟+；2026-11-06 UP run #7 同因失联。
+          export NEEDRESTART_SUSPEND=1
+          # 双保险：NEEDRESTART_SUSPEND 经 sudo -E 可能被 sudoers 的 env_reset 过滤，
+          #   直接写配置，restart="l" = 只列出待重启服务、绝不自动重启。
+          sudo mkdir -p /etc/needrestart/conf.d
+          echo '$nrconf{restart} = "l";' | sudo tee /etc/needrestart/conf.d/99-ci-no-restart.conf >/dev/null
+          echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections
           sudo -E apt-get -qq update --fix-missing
-          sudo -E apt-get -qq full-upgrade
+          # r52（对齐 UP r47b）：去掉 full-upgrade。
+          #   CI 每次升级整个 Ubuntu 既慢又没必要——编译只依赖工具链与构建工具，
+          #   83 包的依赖清单已覆盖；实测同步骤耗时在 2m46s ~ 65min 之间漂移，全看当次待升级包数量。
+          # sudo -E apt-get -qq -y full-upgrade
           # r50：依赖清单改为读仓库内文件，不再联网拉取外部 URL。
           # 外部清单一挂或内容被改，构建就直接红；本地文件改动会留 git 记录。
           DEPFILE="$GITHUB_WORKSPACE/config/Ubuntu-2410.txt"
@@ -121,9 +136,25 @@ jobs:
           PKGS=$(grep -vE '^\s*#|^\s*$' "$DEPFILE" | tr '\n' ' ')
           test -n "$PKGS" || { echo "::error::依赖清单为空：$DEPFILE"; exit 1; }
           echo "依赖包数量: $(echo $PKGS | wc -w)"
-          sudo -E apt-get -qq install -y $PKGS
-          sudo -E apt-get -qq install -y android-sdk-libsparse-utils dos2unix xz-utils
-          sudo -E apt-get -qq autoremove --purge
+          # r52（对齐 UP r49）：给依赖安装设硬上限，超时不再拖死整个构建；
+          #   runner 到 apt 源带宽实测约 150KB/s，装不完时宁可带着已有工具继续编译。
+          set +e
+          sudo timeout 900 env NEEDRESTART_SUSPEND=1 apt-get -qq -y --no-upgrade --no-install-recommends \
+            -o Acquire::Retries=2 -o Acquire::http::Timeout=20 \
+            -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+            install $PKGS
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "::warning::依赖安装未在 15 分钟内完成（rc=$RC），恢复 dpkg 状态后继续构建"
+            sudo dpkg --configure -a || true
+          else
+            echo "依赖安装完成"
+          fi
+          sudo -E apt-get -qq -y --no-upgrade --no-install-recommends install android-sdk-libsparse-utils dos2unix xz-utils || true
+          # r52（对齐 UP r48）：移除 autoremove --purge。
+          #   一次性容器无清理收益；镜像变动后它会批量删包并触发 needrestart，
+          #   是 runner 失联的高风险源。
           sudo -E apt-get -qq clean
           sudo timedatectl set-timezone "$TZ"
           sudo mkdir -p /workdir
