@@ -258,15 +258,6 @@ jobs:
           prefix: ${{ github.workspace }}/openwrt
           mixkey: amlogic6.6/tree/${{ env.REPO_BRANCH }}?device=quicker-amlogic-2512
 
-      - name: 配置 ccache 上限
-        working-directory: /workdir/openwrt
-        run: |
-          mkdir -p .ccache
-          printf 'max_size = 1.0G\ncompression = true\n' > .ccache/ccache.conf
-          echo "=== ccache 目录现状（首跑为 0，第 2 次起应 ≥1G）==="
-          du -sh .ccache
-          df -h . | tail -1
-
       - name: 安装订阅源
         working-directory: /workdir/openwrt
         timeout-minutes: 30
