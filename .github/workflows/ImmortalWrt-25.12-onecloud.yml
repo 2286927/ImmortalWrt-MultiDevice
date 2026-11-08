@@ -166,8 +166,6 @@ jobs:
           export OWRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
           echo "OWRT_DATE=$OWRT_DATE" >> $GITHUB_ENV
           echo "OWRT_SERVER_IP=${OWRT_IP%.*}.1" >> $GITHUB_ENV
-          # ccache 固定落在 TOPDIR 内（= cachewrtbuild 已缓存的 openwrt/.ccache，零新增缓存条目）
-          echo "CCACHE_DIR=/workdir/openwrt/.ccache" >> $GITHUB_ENV
 
       - name: 克隆源仓库
         working-directory: /workdir
@@ -309,11 +307,6 @@ jobs:
 
           rm -rf ./tmp* ./.config*
           cp $GITHUB_WORKSPACE/${{ env.OWRT_CFG }} .config
-          # 启用 ccache：保留 CONFIG_CCACHE_DIR="" → include/ccache.mk 回落到 $(TOPDIR)/.ccache
-          # 即 /workdir/openwrt/.ccache，正好是 cachewrtbuild 已缓存的 openwrt/.ccache（同一 inode，零新增条目）
-          sed -i '/^CONFIG_CCACHE=/d;/^CONFIG_CCACHE_DIR=/d' .config
-          echo 'CONFIG_CCACHE=y' >> .config
-          echo 'CONFIG_CCACHE_DIR=""' >> .config
           # r51: socat OpenSSL 显式预置（本线走 lean2.sh 配方，不经过 scripts/*/diy-part2.sh 的 1h 门禁；
           #   quicker-amlogic.config 只选 luci-app-socat，socat 由其依赖拉入，CONFIG_SOCAT_SSL 无默认值 → 恒 not set；
           #   packages feed net/socat/Makefile 在 SOCAT_SSL!=y 时传 --disable-openssl，编出的 socat 无 TLS 能力）
@@ -529,17 +522,6 @@ jobs:
           sh -n files/etc/init.d/loghygiene || { echo "::error::loghygiene 语法错误"; exit 1; }
           test -f files/www/luci-static/resources/view/status/include/10_system.js || { echo "::error::10_system.js 未注入"; exit 1; }
           make defconfig
-          # ccache 落地守卫：defconfig 重算后必须仍为 y，且目录必须在构建目录内（否则收益全丢）
-          if ! grep -qx 'CONFIG_CCACHE=y' .config; then
-            echo 'CONFIG_CCACHE=y' >> .config
-            make defconfig >/dev/null 2>&1 || true
-          fi
-          grep -qx 'CONFIG_CCACHE=y' .config || { echo "::error::CONFIG_CCACHE 未能保持 =y，ccache 不生效"; exit 1; }
-          _ccd=$(sed -n 's/^CONFIG_CCACHE_DIR="\(.*\)"$/\1/p' .config)
-          case "$_ccd" in
-            ""|"/workdir/openwrt/.ccache") echo "PASS⑱ ccache 已启用，CCACHE_DIR=[${_ccd:-默认 TOPDIR/.ccache}]" ;;
-            *) echo "::error::CONFIG_CCACHE_DIR=[$_ccd] 不在缓存路径内，收益会全部丢失"; exit 1 ;;
-          esac
           # r50 守卫: socat 必须带 OpenSSL（TLS 终结能力）
           #   packages feed 的 net/socat/Makefile 在 CONFIG_SOCAT_SSL!=y 时传 --disable-openssl，
           #   编出的 socat -V 会显示 #undef WITH_OPENSSL，OPENSSL-LISTEN/CONNECT 不可用。
@@ -655,7 +637,6 @@ jobs:
         timeout-minutes: 300
         run: |
           echo -e "$(nproc) thread compile"
-          export CCACHE_DIR=/workdir/openwrt/.ccache
           : > build.log
           set +e
           stdbuf -oL -eL make -j$(nproc) 2>&1 | stdbuf -oL tee build.log
@@ -676,20 +657,10 @@ jobs:
           fi
           echo ">>> 编译完成，build.log 行数: $(wc -l < build.log)"
 
-      - name: ccache 统计与构建摘要
+      - name: 构建摘要
         if: always()
         working-directory: /workdir/openwrt
         run: |
-          export CCACHE_DIR=/workdir/openwrt/.ccache
-          CC=""
-          if [ -x staging_dir/host/bin/ccache ]; then CC=./staging_dir/host/bin/ccache
-          elif command -v ccache >/dev/null 2>&1; then CC=ccache; fi
-          if [ -n "$CC" ]; then
-            echo "=== ccache 目录 ==="; du -sh "$CCACHE_DIR" 2>/dev/null || echo 0
-            echo "=== ccache -s ==="; "$CC" -s || true
-          else
-            echo "::warning::未找到 ccache 二进制（编译前失败时属正常）"
-          fi
           {
             echo "## 构建摘要"
             echo ""
@@ -700,7 +671,6 @@ jobs:
             for _f in outfile/*.tar.gz outfile/*.tar outfile/*.img.xz; do
               [ -f "$_f" ] && echo "| 产物 | $(basename "$_f") ($(du -h "$_f" | cut -f1)) |"
             done
-            echo "| ccache 体积 | $(du -sh "$CCACHE_DIR" 2>/dev/null | cut -f1) |"
           } >> $GITHUB_STEP_SUMMARY
 
       - name: 上传编译日志（失败时）
