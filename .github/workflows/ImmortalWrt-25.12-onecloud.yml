@@ -800,24 +800,59 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          R="${{ github.repository }}"; BR="${REPO_BRANCH}"
-          echo "=== 治理前 ==="
-          gh cache list --repo "$R" --limit 100 || true
-          # ① dl：同分支只留最新（跨月旧条目是最大浪费）
-          gh cache list --repo "$R" --limit 100 --json id,key,createdAt \
-            -q "sort_by(.createdAt)|reverse|.[]|select(.key|startswith(\"dl-${BR}-\"))|.id" | tail -n +2 \
-            | while read -r id; do echo "删 dl 旧条目 $id"; gh cache delete "$id" --repo "$R" || true; done
-          # ② cachewrtbuild 条目：key 含 run_id，每轮新增一条，只留最新
-          gh cache list --repo "$R" --limit 100 --json id,key,createdAt \
-            -q 'sort_by(.createdAt)|reverse|.[]|select(.key|startswith("amlogic6.6/"))|.id' | tail -n +2 \
-            | while read -r id; do echo "删 cachewrtbuild 旧条目 $id"; gh cache delete "$id" --repo "$R" || true; done
-          # ③ 指纹只留最近 6 条
-          gh cache list --repo "$R" --limit 100 --json id,key,createdAt \
-            -q 'sort_by(.createdAt)|reverse|.[]|select(.key|startswith("fp-"))|.id' | tail -n +7 \
-            | while read -r id; do gh cache delete "$id" --repo "$R" || true; done
-          echo "=== 治理后 ==="
-          gh cache list --repo "$R" --limit 100 || true
+          # r55：原实现用 `gh cache list --json ... -q`，在本 runner 上不产出内容，
+          #   管道空转 → 一条缓存也没删（实测 run 42478524723 治理前后列表完全相同）。
+          #   改为 gh api 取原始 JSON + python3 解析，逐条删除并打印 rc/错误。
+          python3 - "${{ github.repository }}" "${REPO_BRANCH}" <<'PY'
+          import json, subprocess, sys
 
+          repo, br = sys.argv[1], sys.argv[2]
+
+
+          def api(path, method='GET'):
+              r = subprocess.run(['gh', 'api', '-X', method, path], capture_output=True, text=True)
+              return r.returncode, r.stdout, r.stderr
+
+
+          rc, out, err = api('/repos/%s/actions/caches?per_page=100' % repo)
+          if rc != 0:
+              print('::warning::读取缓存列表失败 rc=%d %s' % (rc, err[:200]))
+              raise SystemExit(0)
+          items = json.loads(out or '{}').get('actions_caches', [])
+          total = sum(x['size_in_bytes'] for x in items) / 1073741824
+          print('=== 治理前：%d 条，合计 %.2f GB ===' % (len(items), total))
+          for x in sorted(items, key=lambda y: -y['size_in_bytes'])[:8]:
+              print('  %6.2f GB  %s' % (x['size_in_bytes'] / 1073741824, x['key'][:66]))
+
+
+          def rm(why, x):
+              rc, out, err = api('/repos/%s/actions/caches/%s' % (repo, x['id']), 'DELETE')
+              print('  删 %-18s %6.2f GB rc=%d %s' % (why, x['size_in_bytes'] / 1073741824, rc,
+                                                    (err or '').strip()[:90]))
+
+
+          # ① dl：同分支只留最新（跨月旧 key 是最大浪费，实测有一条 2.61 GB 的 202610）
+          dl = sorted([x for x in items if x['key'].startswith('dl-%s-' % br)],
+                      key=lambda x: x['created_at'], reverse=True)
+          for x in dl[1:]:
+              rm('dl 旧条目', x)
+          # ② cachewrtbuild：key 含 run_id，每轮新增一条，只留最新
+          am = sorted([x for x in items if x['key'].startswith('amlogic6.6/')],
+                      key=lambda x: x['created_at'], reverse=True)
+          for x in am[1:]:
+              rm('cachewrtbuild 旧', x)
+          # ③ 源码指纹：留最近 6 条
+          fp = sorted([x for x in items if x['key'].startswith('fp-')],
+                      key=lambda x: x['created_at'], reverse=True)
+          for x in fp[6:]:
+              rm('指纹旧条目', x)
+
+          rc, out, err = api('/repos/%s/actions/caches?per_page=100' % repo)
+          if rc == 0:
+              items = json.loads(out or '{}').get('actions_caches', [])
+              print('=== 治理后：%d 条，合计 %.2f GB ===' % (
+                  len(items), sum(x['size_in_bytes'] for x in items) / 1073741824))
+          PY
       - name: 记录源码指纹（仅全流程成功）
         if: success() && needs.check-updates.outputs.fingerprint != ''
         run: |
