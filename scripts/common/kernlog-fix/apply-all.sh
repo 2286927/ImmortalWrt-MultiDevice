@@ -60,15 +60,25 @@ if [ -d "$TARGET_DIR" ]; then
 		grep -q "^${_sym}=" "$SRC_ROOT/.config" 2>/dev/null || echo "${_sym}=y" >> "$SRC_ROOT/.config" 2>/dev/null
 	done
 
-	# K1：内核补丁
-	_pdir="$TARGET_DIR/patches-6.12"
-	[ -d "$_pdir" ] || _pdir="$TARGET_DIR/generic/patches-6.12"
-	[ -d "$_pdir" ] || { mkdir -p "$TARGET_DIR/patches-6.12"; _pdir="$TARGET_DIR/patches-6.12"; }
-	if [ -f "$HERE/02-kernel-patch-l2c310.patch" ]; then
-		cp "$HERE/02-kernel-patch-l2c310.patch" "$_pdir/999-l2c310-loglevel.patch"
-		ok "K1 内核补丁已放入 $_pdir"
+	# K1：内核补丁（默认关闭，2026-11-08 起）
+	#   实测（run 42473647210）：该补丁对 linux-6.12.112 打不上 ——
+	#     Applying .../999-l2c310-loglevel.patch
+	#     Hunk #1 FAILED at 640.  Patch failed!
+	#   → target/linux failed to build，整轮构建失败。
+	#   原因：实际内核已被上游 stable 与 lede/amlogic 多层补丁改写，上下文与 vanilla v6.12 不同。
+	#   恢复步骤：按新内核上下文重新生成补丁，然后置 KERNLOG_KERNEL_PATCH=1 再启用。
+	if [ "${KERNLOG_KERNEL_PATCH:-0}" = "1" ]; then
+		_pdir="$TARGET_DIR/patches-6.12"
+		[ -d "$_pdir" ] || _pdir="$TARGET_DIR/generic/patches-6.12"
+		[ -d "$_pdir" ] || { mkdir -p "$TARGET_DIR/patches-6.12"; _pdir="$TARGET_DIR/patches-6.12"; }
+		if [ -f "$HERE/02-kernel-patch-l2c310.patch" ]; then
+			cp "$HERE/02-kernel-patch-l2c310.patch" "$_pdir/999-l2c310-loglevel.patch"
+			ok "K1 内核补丁已放入 $_pdir（KERNLOG_KERNEL_PATCH=1）"
+		else
+			fail "K1 缺少 02-kernel-patch-l2c310.patch"
+		fi
 	else
-		fail "K1 缺少 02-kernel-patch-l2c310.patch"
+		say "K1 内核补丁已跳过（默认关闭；该补丁对 6.12.112 无法应用，详见脚本内注释）"
 	fi
 else
 	fail "K1/U3 未找到 $TARGET_DIR，跳过内核层修复"
