@@ -632,6 +632,25 @@ jobs:
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
 
+      - name: 内核准备（提前暴露补丁/依赖问题）
+        working-directory: /workdir/openwrt
+        timeout-minutes: 40
+        continue-on-error: true
+        run: |
+          # 内核准备阶段是补丁打不上、kconfig 不匹配的集中爆发点。
+          # 原实现要等 make world 跑 50 分钟才报「target/linux failed to build」，且不带细节；
+          # 这里先单独跑一遍 prepare（增量，几分钟），失败就把细节打进 job 日志。
+          set +e
+          stdbuf -oL -eL make -j$(nproc) target/linux/prepare V=s 2>&1 | stdbuf -oL tee prepare.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "::warning::target/linux/prepare 失败 rc=$RC，以下为关键行（构建将继续，供对照）"
+            grep -nE 'Hunk|hunk|patch|Patch|fuzz|Rejected|Error|error:' prepare.log | tail -n 60 || true
+          else
+            echo ">>> 内核准备通过"
+          fi
+
       - name: 编译固件
         working-directory: /workdir/openwrt
         timeout-minutes: 300
@@ -651,8 +670,18 @@ jobs:
             set -e
           fi
           if [ "$RC" -ne 0 ]; then
-            echo "::error::编译失败 rc=$RC，build.log 末尾 200 行："
-            tail -n 200 build.log
+            echo "::warning::编译失败 rc=$RC，用 V=s 复跑失败目标以定位（输出追加进 build.log）"
+            _tgt=$(grep -oE '\-C [^ ]+ compile' build.log | tail -1 | awk '{print $2}')
+            echo ">>> 失败目标推断: ${_tgt:-未知}"
+            set +e
+            if [ -n "$_tgt" ]; then
+              stdbuf -oL -eL make -j1 V=s "$_tgt/compile" 2>&1 | stdbuf -oL tee -a build.log
+            else
+              stdbuf -oL -eL make -j1 V=s 2>&1 | stdbuf -oL tee -a build.log
+            fi
+            set -e
+            echo "::error::编译失败 rc=$RC，build.log 末尾 150 行："
+            tail -n 150 build.log
             exit "$RC"
           fi
           echo ">>> 编译完成，build.log 行数: $(wc -l < build.log)"
@@ -669,8 +698,8 @@ jobs:
             echo "| 分支 | ${REPO_BRANCH} |"
             echo "| 版本戳 | ${OWRT_DATE} |"
             for _f in outfile/*.tar.gz outfile/*.tar outfile/*.img.xz; do
-              [ -f "$_f" ] && echo "| 产物 | $(basename "$_f") ($(du -h "$_f" | cut -f1)) |"
-            done
+              if [ -f "$_f" ]; then echo "| 产物 | $(basename "$_f") ($(du -h "$_f" | cut -f1)) |"; fi
+            done || true
           } >> $GITHUB_STEP_SUMMARY
 
       - name: 上传编译日志（失败时）
