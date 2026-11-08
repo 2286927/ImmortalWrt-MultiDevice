@@ -176,7 +176,7 @@ autoupdate disable     # 关闭每日自动检查
 ## 📦 Globitel BT-R320 刷机资源包（离线自包含）
 
 BT-R320 专用离线刷机包：教程 + 全部刷机文件打包，无需到 Release 页逐个下载。
-**[下载 Globitel-BT-R320-flash-package.zip](Globitel-BT-R320-flash-package.zip)**（约 84 MB，含 Tftpd64 工具与 SSH 密钥三件套）
+**[下载 Globitel-BT-R320-flash-package.zip](https://github.com/2286927/ImmortalWrt-MultiDevice/releases/download/BT-R320-stock-backup/Globitel-BT-R320-flash-package.zip)**（约 84 MB，含 Tftpd64 工具与 SSH 密钥三件套）
 
 包内清单（解压后顶层目录 `Globitel-BT-R320-flash-package/`）：
 
