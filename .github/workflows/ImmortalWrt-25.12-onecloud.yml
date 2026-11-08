@@ -192,6 +192,18 @@ jobs:
           test -f recipe/sh/setup.sh || { echo "::error::recipe 展开不完整：缺 sh/setup.sh"; exit 1; }
           test -d recipe/onecloud/files/etc || { echo "::error::recipe 展开不完整：缺 onecloud/files/etc"; exit 1; }
           cd recipe
+          # r56: vendor 包内的 Config/quicker-amlogic.config 是 CRLF（实测 1652/1652 行）。
+          #   后果：加载自定义配置里 defconfig 之前的所有
+          #     `grep -qx 'CONFIG_X=y' .config` 与 `sed -E '/^...=y$/d' .config`
+          #   全部静默失效（行尾多一个 \r）。实测 run 42487148698：r51 的
+          #   「>>> socat OpenSSL 预置」一次都没打印，即该预置一直是空操作，
+          #   真正生效的是 defconfig 之后的自愈守卫。归一行尾后预置按设计生效。
+          sed -i 's/\r$//' Config/*.config
+          if grep -q $'\r' Config/*.config; then
+            echo "::error::配方 config 仍含 CRLF，行尾归一失败"
+            exit 1
+          fi
+          echo "配置行尾已归一: $(grep -c '^CONFIG_' Config/quicker-amlogic.config) 个 CONFIG 行"
           # 配方脚本内部的 $GITHUB_WORKSPACE/xxx 引用统一指向 recipe 子目录
           sed -E -i 's#\$GITHUB_WORKSPACE/(sh|lede6|onecloud|ax6|Config|Ubuntu)#\$GITHUB_WORKSPACE/recipe/\1#g' sh/*.sh
           dos2unix sh/*.sh 2>/dev/null || true
@@ -255,6 +267,29 @@ jobs:
           ccache: 'true'
           prefix: ${{ github.workspace }}/openwrt
           mixkey: amlogic6.6/tree/${{ env.REPO_BRANCH }}?device=quicker-amlogic-2512
+
+      - name: 计算 dl 缓存键
+        run: |
+          # r56: 本仓 19 条线（21.02/23.05/24.10/25.12 各设备）统一用 dl-<分支>-<年月>，
+          #   同分支各设备共用一份源码包池；onecloud 此前没有 dl 缓存，
+          #   实测 run 42487148698 的 make download -j8 耗时 3m58s，全部是重复下载。
+          echo "DL_CACHE_KEY=dl-${REPO_BRANCH}-$(date +%Y%m)" >> $GITHUB_ENV
+          echo "dl 缓存键: dl-${REPO_BRANCH}-$(date +%Y%m)"
+          if [ -d /workdir/openwrt/dl ]; then
+            echo "恢复前 dl: $(find /workdir/openwrt/dl -type f | wc -l) 个文件 / $(du -sh /workdir/openwrt/dl | cut -f1)"
+          else
+            echo "恢复前 dl: 目录尚不存在（首跑正常）"
+          fi
+
+      - name: 恢复 dl 源码包缓存
+        id: cache-dl
+        uses: actions/cache@v5
+        with:
+          # 绝对路径：openwrt 是符号链接，用 workspace 相对路径会让 actions/cache 解析歧义
+          path: /workdir/openwrt/dl
+          key: ${{ env.DL_CACHE_KEY }}
+          restore-keys: |
+            dl-${{ env.REPO_BRANCH }}-
 
       - name: 安装订阅源
         working-directory: /workdir/openwrt
@@ -628,28 +663,48 @@ jobs:
           done
           grep -q '^CONFIG_PACKAGE_lighttpd=y' .config && { echo "::error::lighttpd 被依赖链拉回（真硬依赖需人工裁决：改端口 8080 方案）"; grep -E '^CONFIG_PACKAGE_lighttpd' .config; exit 1; }
           echo "=== lighttpd 剔除守卫通过（80 端口归还 uhttpd） ==="
+          # r56: 配合本次新增的 dl 缓存，改为「清单体检 + 只删空文件/HTML 错误页」。
+          #   原实现按 <1KB 无差别删除（连合法小文件一起删），与 dl 缓存叠加会形成
+          #   「恢复 → 删 → 重下 → 再删」的死循环，缓存收益被完全抹平。
+          if [ -f dl/.dl-manifest ]; then
+            _bad=0
+            while read -r _sz _p; do
+              [ -n "$_p" ] && [ -f "dl/$_p" ] || continue
+              if [ "$(stat -c%s "dl/$_p" 2>/dev/null || echo -1)" != "$_sz" ]; then
+                echo "剔除半截: dl/$_p"; rm -f "dl/$_p"; _bad=$((_bad + 1))
+              fi
+            done < dl/.dl-manifest
+            echo "dl 体检剔除 $_bad 个"
+          fi
           make download -j8
-          find dl -size -1024c -exec ls -l {} \;
-          find dl -size -1024c -exec rm -f {} \;
+          ( cd dl && find . -type f ! -name '.dl-manifest' -printf '%s %p\n' | sed 's# \./# #' | sort -k2 > .dl-manifest )
+          # 只删空文件与 HTML 错误页（不再按 <1KB 无差别删）
+          find dl -maxdepth 1 -type f -size -1024c -print0 | while IFS= read -r -d '' _f; do
+            if [ ! -s "$_f" ] || head -c 512 "$_f" | grep -qiE '<!doctype|<html|404 not found|403 forbidden'; then
+              echo "删除无效下载: $_f"; rm -f "$_f"
+            fi
+          done
+          echo "dl 文件数: $(find dl -type f ! -name '.dl-manifest' | wc -l)  合计: $(du -sh dl | cut -f1)"
 
-      - name: 内核准备（提前暴露补丁/依赖问题）
+      - name: 内核先行编译（补丁/kconfig 问题提前暴露）
         working-directory: /workdir/openwrt
-        timeout-minutes: 40
-        continue-on-error: true
+        timeout-minutes: 60
         run: |
-          # 内核准备阶段是补丁打不上、kconfig 不匹配的集中爆发点。
-          # 原实现要等 make world 跑 50 分钟才报「target/linux failed to build」，且不带细节；
-          # 这里先单独跑一遍 prepare（增量，几分钟），失败就把细节打进 job 日志。
+          # r56: 原探针 `make target/linux/prepare` 实测无效——run 42487148698 里它 0.4 分钟即「通过」，
+          #   而 run 42473647210 里补丁打不上时它照样绿；真问题要等 make world 跑到 50 分钟才以
+          #   「target/linux failed to build」呈现且不带细节。
+          # 改为先把内核单独编出来：world 的第一步本来就是它，总时间不变，
+          #   但补丁 / kconfig 失败会在 ~10 分钟带 V=s 明细失败，并写进 kernel.log 供 artifact 上传。
           set +e
-          stdbuf -oL -eL make -j$(nproc) target/linux/prepare V=s 2>&1 | stdbuf -oL tee prepare.log
+          stdbuf -oL -eL make -j$(nproc) target/linux/compile V=s 2>&1 | stdbuf -oL tee kernel.log
           RC=${PIPESTATUS[0]}
           set -e
           if [ "$RC" -ne 0 ]; then
-            echo "::warning::target/linux/prepare 失败 rc=$RC，以下为关键行（构建将继续，供对照）"
-            grep -nE 'Hunk|hunk|patch|Patch|fuzz|Rejected|Error|error:' prepare.log | tail -n 60 || true
-          else
-            echo ">>> 内核准备通过"
+            echo "::error::内核编译失败 rc=$RC（补丁 / kconfig），关键行如下"
+            grep -nE 'Hunk|hunk|patch|Patch|fuzz|Rejected|Error [0-9]|error:' kernel.log | tail -n 60 || true
+            exit "$RC"
           fi
+          echo ">>> 内核编译通过（world 阶段复用同一 build_dir，不重复编）"
 
       - name: 编译固件
         working-directory: /workdir/openwrt
@@ -697,6 +752,9 @@ jobs:
             echo "|---|---|"
             echo "| 分支 | ${REPO_BRANCH} |"
             echo "| 版本戳 | ${OWRT_DATE} |"
+            if [ -d dl ]; then
+              echo "| dl 源码包 | $(find dl -type f | wc -l) 个文件 / $(du -sh dl | cut -f1) |"
+            fi
             for _f in outfile/*.tar.gz outfile/*.tar outfile/*.img.xz; do
               if [ -f "$_f" ]; then echo "| 产物 | $(basename "$_f") ($(du -h "$_f" | cut -f1)) |"; fi
             done || true
@@ -709,6 +767,7 @@ jobs:
           name: build-log-onecloud-${{ env.REPO_BRANCH }}-${{ env.OWRT_DATE }}
           path: |
             openwrt/build.log
+            openwrt/kernel.log
             openwrt/.config
           retention-days: 7
           if-no-files-found: warn
