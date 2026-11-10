@@ -601,6 +601,13 @@ jobs:
             fi
           done
           echo ">>> 内核瘦身项残留：${TUNE_LEAK} 个"
+          # ── defconfig 之后二次确认：socat 必须仍带 OpenSSL ──────────
+          # diy-part2.sh 的门禁在 make defconfig 之前；这里再验一次，防止依赖重算把符号冲掉。
+          if grep -qx 'CONFIG_PACKAGE_socat=y' .config; then
+            grep -qx 'CONFIG_SOCAT_SSL=y' .config || { echo "::error::defconfig 后 CONFIG_SOCAT_SSL 丢失，socat 会缺 OpenSSL"; exit 1; }
+            grep -qx 'CONFIG_PACKAGE_libopenssl=y' .config || { echo "::error::defconfig 后 libopenssl 丢失，socat 会缺 OpenSSL"; exit 1; }
+            echo "✅ defconfig 复核：socat OpenSSL 仍启用"
+          fi
           for sym in CONFIG_PACKAGE_kmod-sched-fq-pie CONFIG_PACKAGE_kmod-sched-pie \
                      CONFIG_PACKAGE_kmod-tcp-bbr CONFIG_PACKAGE_kmod-ifb \
                      CONFIG_PACKAGE_zram-swap CONFIG_PACKAGE_kmod-zram \
