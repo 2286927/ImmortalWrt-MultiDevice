@@ -1,0 +1,12 @@
+config acme
+	option state_dir '/etc/acme'
+	option account_email 'admin@thegirlisfunny.top'
+	option debug '0'
+
+config cert 'g3000m'
+	option enabled '0'
+	option use_staging '0'
+	option key_type 'ec256'
+	option validation_method 'dns'
+	option dns 'dns_dp'
+	list domains '1g3000m.thegirlisfunny.top'
