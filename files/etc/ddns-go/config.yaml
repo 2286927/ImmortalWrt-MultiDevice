@@ -1,0 +1,35 @@
+dnsconf:
+    - name: ""
+      ipv4:
+        enable: true
+        gettype: url
+        url: https://ddns.oray.com/checkip, https://ip.3322.net, https://4.ipw.cn, https://v4.yinghualuo.cn/bejson, https://myip.ipip.net
+        netinterface: zt5u43wdzv
+        cmd: ""
+        domains:
+            - ""
+      ipv6:
+        enable: true
+        gettype: netInterface
+        url: https://speed.neu6.edu.cn/getIP.php, https://v6.ident.me, https://6.ipw.cn, https://v6.yinghualuo.cn/bejson
+        netinterface: br-lan
+        cmd: ""
+        ipv6reg: ""
+        domains:
+            - 1g3000m.thegirlisfunny.top
+      dns:
+        name: dnspod
+        id: ""
+        secret: ""
+        extparam: ""
+      ttl: ""
+      httpinterface: ""
+user:
+    username: root
+    password: ""
+webhook:
+    webhookurl: ""
+    webhookrequestbody: ""
+    webhookheaders: ""
+notallowwanaccess: true
+lang: en
