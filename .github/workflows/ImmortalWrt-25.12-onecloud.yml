@@ -749,13 +749,29 @@ jobs:
 
       - name: 内核先行编译（补丁/kconfig 问题提前暴露）
         working-directory: /workdir/openwrt
-        timeout-minutes: 60
+        timeout-minutes: 120
         run: |
           # r56: 原探针 `make target/linux/prepare` 实测无效——run 42487148698 里它 0.4 分钟即「通过」，
           #   而 run 42473647210 里补丁打不上时它照样绿；真问题要等 make world 跑到 50 分钟才以
           #   「target/linux failed to build」呈现且不带细节。
           # 改为先把内核单独编出来：world 的第一步本来就是它，总时间不变，
           #   但补丁 / kconfig 失败会在 ~10 分钟带 V=s 明细失败，并写进 kernel.log 供 artifact 上传。
+          #
+          # r58（对齐 UP r58）工具链就绪守卫：
+          #   `target/linux/compile` 不依赖 tools/install、toolchain/install，工具链靠 cachewrtbuild 的
+          #   tree 缓存带入，而该缓存键含上游 commit。上游源码前移 → 未命中 → staging_dir 里既无 host
+          #   的 m4 也无交叉 gcc → 内核 kconfig 阶段报 gcc/m4 找不到，6 分钟就误判「内核失败」。
+          #   这里先补齐 host tools 与 toolchain 再跑探针，判据不变。
+          _need_tc=0
+          [ -x staging_dir/host/bin/m4 ] || _need_tc=1
+          ls staging_dir/toolchain-*/bin/*-gcc >/dev/null 2>&1 || _need_tc=1
+          if [ "$_need_tc" = "1" ]; then
+            echo ">>> 工具链未就绪（tree 缓存未命中），先构建 host tools + toolchain（约 30-45 分钟）"
+            make -j$(nproc) tools/install toolchain/install || { echo "::error::host tools / toolchain 构建失败"; exit 1; }
+            echo ">>> 工具链就绪，进入内核探针"
+          else
+            echo ">>> 工具链已在位（tree 缓存命中），跳过构建"
+          fi
           set +e
           stdbuf -oL -eL make -j$(nproc) target/linux/compile V=s 2>&1 | stdbuf -oL tee kernel.log
           RC=${PIPESTATUS[0]}
