@@ -1,5 +1,7 @@
 # ImmortalWrt-MultiDevice
 
+> 找固件直接看 **[固件索引 RELEASES.md](RELEASES.md)**：按设备列出最新版本与下载直链，不用在 Releases 页翻页。
+
 基于 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) 的多设备固件云编译仓库，通过 GitHub Actions 自动编译，共 **10 款设备，21 条编译线**（9 款 × 24.10/25.12 双版本 + Newifi Y1 21.02/23.05 专用线 + Globitel BT-R320 25.12 专用线），产物自动发布到 Releases。
 
 ## 支持设备
