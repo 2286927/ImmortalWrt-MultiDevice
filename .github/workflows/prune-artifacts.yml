@@ -1,0 +1,141 @@
+name: 清理历史 artifacts（存储配额治理）
+
+# r57：run 42954571276 因账号 Actions 存储配额打满（Failed to CreateArtifact: Artifact storage
+#   quota has been hit）在「上传 artifacts」步骤整轮失败，连带跳过固件发布。本工作流负责把
+#   Actions artifact 占用压回可控范围；构建工作流内另有「存储额度治理（artifacts 预清理）」做
+#   每次构建前的兜底，二者共用同一套分组规则。
+#
+# 规则：按「同族」分组（剥掉名字尾部日期戳），每组只留最新 keep 条；另外超过 max_age_days 的
+#   一律删。当前正在跑的 run 自己的产物不动。
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只打印待删清单，不实际删除'
+        type: boolean
+        default: true
+      keep:
+        description: '每个同族保留最新几条'
+        type: string
+        default: '2'
+      max_age_days:
+        description: '超过该天数的 artifact 一律删除'
+        type: string
+        default: '7'
+  schedule:
+    # 每周日 04:30 UTC（北京时间周日 12:30），与 prune-releases.yml 的 04:00 错开
+    - cron: '30 4 * * 0'
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: prune-artifacts
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 清理 artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          CUR_RUN: ${{ github.run_id }}
+          DRY_IN: ${{ inputs.dry_run }}
+          KEEP_IN: ${{ inputs.keep }}
+          AGE_IN: ${{ inputs.max_age_days }}
+        run: |
+          # schedule 触发时 inputs 为空 → 定时任务按真删执行；手动触发默认 dry_run=true
+          export DRY="${DRY_IN:-false}"
+          export KEEP="${KEEP_IN:-2}"
+          export AGE="${AGE_IN:-7}"
+          echo "repo=$REPO  dry_run=$DRY  keep=$KEEP  max_age_days=$AGE"
+          python3 - <<'PY' | tee /tmp/prune.log
+          import datetime, json, os, re, subprocess
+
+          repo = os.environ['REPO']
+          cur = str(os.environ.get('CUR_RUN', ''))
+          dry = os.environ.get('DRY', 'true').lower() == 'true'
+          keep = int(os.environ.get('KEEP', '2'))
+          age_max = int(os.environ.get('AGE', '7'))
+
+
+          def api(path, method='GET'):
+              r = subprocess.run(['gh', 'api', '-X', method, path], capture_output=True, text=True)
+              return r.returncode, r.stdout, r.stderr
+
+
+          def listing():
+              rc, out, err = api('/repos/%s/actions/artifacts?per_page=100' % repo)
+              if rc != 0:
+                  print('::error::读取 artifact 列表失败 rc=%d %s' % (rc, err[:200]))
+                  return None
+              return json.loads(out or '{}').get('artifacts', [])
+
+
+          def grp(n):
+              # 同族归并：剥掉尾部日期戳（26.11.06_15.39.35 / 202611060132 / 202609171425）
+              n = re.sub(r'[-_]\d{2}\.\d{2}\.\d{2}[_\d.]*$', '', n)
+              return re.sub(r'[-_]\d{8,}$', '', n)
+
+
+          items = listing()
+          if items is None:
+              raise SystemExit(1)
+          gb = lambda xs: sum(x['size_in_bytes'] for x in xs) / 1073741824
+          print('=== 治理前：%d 条，合计 %.2f GB ===' % (len(items), gb(items)))
+          for x in sorted(items, key=lambda y: -y['size_in_bytes'])[:10]:
+              print('  %7.1f MB  %-46s 过期 %s' % (
+                  x['size_in_bytes'] / 1048576, x['name'][:46],
+                  datetime.datetime.fromisoformat(x['expires_at'].replace('Z', '+00:00')).strftime('%Y-%m-%d')))
+
+          now = datetime.datetime.now(datetime.timezone.utc)
+          seen = {}
+          victims = []
+          for x in sorted(items, key=lambda y: y['created_at'], reverse=True):
+              if str((x.get('workflow_run') or {}).get('id')) == cur:
+                  print('  跳过（本轮产物）%s' % x['name'])
+                  continue
+              age = (now - datetime.datetime.fromisoformat(x['created_at'].replace('Z', '+00:00'))).days
+              k = grp(x['name'])
+              seen[k] = seen.get(k, 0) + 1
+              if age > age_max:
+                  victims.append(('超龄 %d 天' % age, x))
+              elif seen[k] > keep:
+                  victims.append(('同族第 %d 条' % seen[k], x))
+
+          print('=== 待删 %d 条，合计 %.2f GB ===' % (
+              len(victims), sum(v[1]['size_in_bytes'] for v in victims) / 1073741824))
+          failed = 0
+          for why, x in victims:
+              if dry:
+                  print('  [dry] %-14s %7.1f MB  %s' % (why, x['size_in_bytes'] / 1048576, x['name'][:52]))
+                  continue
+              rc, out, err = api('/repos/%s/actions/artifacts/%s' % (repo, x['id']), 'DELETE')
+              failed += 0 if rc == 0 else 1
+              print('  删 %-14s %7.1f MB  %s  rc=%d %s' % (
+                  why, x['size_in_bytes'] / 1048576, x['name'][:52], rc, (err or '').strip()[:70]))
+
+          items = listing()
+          if items is not None:
+              print('=== 治理后：%d 条，合计 %.2f GB ===' % (len(items), gb(items)))
+          if failed:
+              print('::warning::%d 条删除失败（见上方 rc/错误）' % failed)
+          PY
+      - name: 写入摘要
+        if: always()
+        run: |
+          {
+            echo "## artifacts 存储治理"
+            echo ""
+            echo "- 触发方式：\`${{ github.event_name }}\`"
+            echo "- dry_run：\`${{ inputs.dry_run || 'false（定时任务）' }}\`"
+            echo ""
+            echo '```'
+            cat /tmp/prune.log 2>/dev/null || echo "（无输出）"
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY

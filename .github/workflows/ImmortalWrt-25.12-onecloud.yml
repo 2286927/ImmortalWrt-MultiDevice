@@ -108,6 +108,67 @@ jobs:
       - name: Checkout 主仓库
         uses: actions/checkout@v7.0.1
 
+      - name: 存储额度治理（artifacts 预清理）
+        # r57（对齐 UP r57）：artifact 存储配额是账号级、不分仓，本仓只能清本仓条目。
+        #   跑在编译最前面，让本轮上传（含失败路径的「上传编译日志」）有足额余量。
+        #   规则：同族只留最新 2 条，且超 3 天的一律删；当前 run 自己的产物不动。
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - "${{ github.repository }}" "${{ github.run_id }}" <<'PY'
+          import datetime, json, re, subprocess, sys
+
+          repo, cur = sys.argv[1], sys.argv[2]
+          KEEP, AGE = 2, 3
+
+
+          def api(p, m='GET'):
+              r = subprocess.run(['gh', 'api', '-X', m, p], capture_output=True, text=True)
+              return r.returncode, r.stdout, r.stderr
+
+
+          def listing():
+              rc, out, err = api('/repos/%s/actions/artifacts?per_page=100' % repo)
+              if rc != 0:
+                  print('::warning::读取 artifact 列表失败 rc=%d %s' % (rc, err[:150]))
+                  return None
+              return json.loads(out or '{}').get('artifacts', [])
+
+
+          items = listing()
+          if items is None:
+              raise SystemExit(0)
+          total = lambda xs: sum(x['size_in_bytes'] for x in xs) / 1073741824
+          print('=== 治理前：%d 条，合计 %.2f GB ===' % (len(items), total(items)))
+
+
+          def grp(n):
+              # 同族归并：剥掉尾部日期戳（26.11.06_15.39.35 / 202611060132 / 202609171425）
+              n = re.sub(r'[-_]\d{2}\.\d{2}\.\d{2}[_\d.]*$', '', n)
+              return re.sub(r'[-_]\d{8,}$', '', n)
+
+
+          now = datetime.datetime.now(datetime.timezone.utc)
+          seen = {}
+          for x in sorted(items, key=lambda y: y['created_at'], reverse=True):
+              if str((x.get('workflow_run') or {}).get('id')) == cur:
+                  continue
+              age = (now - datetime.datetime.fromisoformat(x['created_at'].replace('Z', '+00:00'))).days
+              k = grp(x['name'])
+              seen[k] = seen.get(k, 0) + 1
+              if age > AGE or seen[k] > KEEP:
+                  rc, out, err = api('/repos/%s/actions/artifacts/%s' % (repo, x['id']), 'DELETE')
+                  print('  删 %-44s %7.1f MB  rc=%d %s' % (
+                      x['name'][:44], x['size_in_bytes'] / 1048576, rc, (err or '').strip()[:60]))
+
+
+          items = listing()
+          if items is not None:
+              print('=== 治理后：%d 条，合计 %.2f GB ===' % (len(items), total(items)))
+          PY
+
       - name: 初始化编译环境
         timeout-minutes: 30
         env:
@@ -831,11 +892,19 @@ jobs:
           ls -lh $PWD
 
       - name: 上传 artifacts
+        # r57（对齐 UP r57）：账号 Actions 存储配额曾被打满（run 42954571276：Failed to CreateArtifact:
+        #   Artifact storage quota has been hit），原实现该步失败会连带跳过「上传直刷固件」「发布到固件仓」。
+        #   ① 保留期 15→3 天（404MB/次，Release 与固件仓已完整留档）；
+        #   ② 失败不阻断，配额满只丢 artifact；
+        #   ③ 产物体已是 xz/gz，compression-level: 0 免二次压缩。
+        continue-on-error: true
         uses: actions/upload-artifact@v7.0.2
         with:
           name: onecloud-${{ env.REPO_BRANCH }}-${{ env.OWRT_DATE }}
           path: openwrt/outfile/*
-          retention-days: 15
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: warn
 
       - name: 上传直刷固件
         uses: ncipollo/release-action@v1
