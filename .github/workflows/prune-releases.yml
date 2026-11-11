@@ -1,0 +1,313 @@
+name: 清理历史发布并生成固件索引
+
+# 为什么单开一个工作流：
+#   现有 22 条构建线都跑 1-2 小时，把清理逻辑塞进去会反复改脆弱的长流程；
+#   这里独立成一个轻量工作流，周更一次即可，也可以手动按需跑。
+#
+# 设备端自动升级只认固定 tag（本仓/固件仓的 latest），每台设备的构建版 release
+# 纯粹是归档，删旧的不影响任何设备升级。
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'            # 每周日 04:00 UTC（北京时间 12:00）
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: '每组（设备+分支）保留最近几条'
+        required: false
+        default: '4'
+      dry_run:
+        description: '只列出将删清单，不实际删除（首次务必先演练）'
+        type: choice
+        options: ['true', 'false']
+        default: 'true'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prune-releases
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-24.04
+    env:
+      # 手动触发时按输入走；定时触发一律按默认值真删（否则永远不清理）
+      KEEP: ${{ github.event_name == 'workflow_dispatch' && inputs.keep || '4' }}
+      DRY: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+      # 白名单：设备升级数据源 / 刷机资源包 / 历史资源发布，永不删
+      PROTECT: 'autoupdate,BT-R320-stock-backup,one'
+      DEVICES: 'OneCloud,r68s,cmcc_rax3000m,cm520,hc5962,octopus,rax3000m,newifi-d1,newifi-d2,newifi-y1,globitel-bt-r320'
+      PAGES_OUT: /tmp/release-index.json
+    steps:
+      - name: Checkout 主仓库
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: 清理本仓历史发布
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          #!/usr/bin/env python3
+          # -*- coding: utf-8 -*-
+          """清理历史 release 并生成固件索引（由 .github/workflows/prune-releases.yml 调用）。
+
+          设计要点：
+          - 只按「设备 + 分支」分组保留最近 N 条；解析不出设备/分支的一律进白名单，宁可少删。
+          - dry_run 只打印，不删。
+          - 删除连 git tag 一起清（--cleanup-tag），否则 Tags 页会继续脏。
+          """
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+
+          repo = os.environ['TARGET_REPO']
+          keep = int(os.environ.get('KEEP') or 4)
+          dry = (os.environ.get('DRY', 'false').lower() == 'true')
+          protect = {x.strip() for x in os.environ.get('PROTECT', '').split(',') if x.strip()}
+          devices = [x.strip() for x in os.environ.get('DEVICES', '').split(',') if x.strip()]
+          devices.sort(key=len, reverse=True)
+          pages_out = os.environ.get('PAGES_OUT', '')          # 输出给索引步骤用的 JSON（可选）
+          FAIL = 0
+
+
+          def gh(*args, check=True):
+              p = subprocess.run(['gh'] + list(args), capture_output=True, text=True)
+              if check and p.returncode != 0:
+                  print('::error::gh %s 失败 rc=%d %s' % (' '.join(args), p.returncode, p.stderr.strip()[:300]))
+                  sys.exit(1)
+              return p
+
+
+          def list_releases(repo_full):
+              p = gh('api', '--paginate', '--slurp', 'repos/%s/releases?per_page=100' % repo_full)
+              try:
+                  pages = json.loads(p.stdout or '[]')
+              except json.JSONDecodeError:
+                  print('::error::解析 release 列表失败')
+                  sys.exit(1)
+              return [r for page in pages for r in page]
+
+
+          def family(r):
+              """返回 (设备, 分支)；白名单或无法解析返回 None。"""
+              if r.get('tag_name') in protect:
+                  return None
+              blob = ((r.get('tag_name') or '') + ' ' + (r.get('name') or '')).lower()
+              m = re.search(r'(2[0-9]\.\d{2})', blob)
+              branch = m.group(1) if m else ''
+              dev = ''
+              for d in devices:
+                  if d.lower() in blob:
+                      dev = d
+                      break
+              if not dev or not branch:
+                  return None
+              return (dev, branch)
+
+
+          ASSET_PRIORITY = [
+              r'\.burn\.img\.xz$', r'sysupgrade\.(?:bin|itb|img|gz)$', r'\.img\.xz$',
+              r'rootfs\.tar\.gz$', r'\.itb$', r'\.bin$', r'\.tar\.gz$',
+          ]
+
+
+          def pick_main_asset(r):
+              names = [a['name'] for a in r.get('assets', [])]
+              for pat in ASSET_PRIORITY:
+                  for n in names:
+                      if re.search(pat, n, re.I):
+                          return n
+              return ''
+
+
+          def md_cell(s):
+              return (s or '').replace('|', '\\|')
+
+
+          # ------------------------------------------------------------------ 清理
+          rel = list_releases(repo)
+          groups = {}
+          kept_protected = []
+          for r in rel:
+              f = family(r)
+              if f is None:
+                  kept_protected.append(r)
+                  continue
+              groups.setdefault(f, []).append(r)
+
+          plan = []
+          for f, items in groups.items():
+              items.sort(key=lambda r: r.get('published_at') or r.get('created_at') or '', reverse=True)
+              plan += [(f, r) for r in items[keep:]]
+
+          print('=== %s ===' % repo)
+          print('共 %d 条 release；可分 %d 组；白名单保留 %d 条；计划删 %d 条（keep=%d, dry_run=%s）'
+                % (len(rel), len(groups), len(kept_protected), len(plan), keep, dry))
+          for f, items in sorted(groups.items(), key=lambda x: (-len(x[1]), x[0])):
+              print('  %-26s 共 %2d 条 → 留 %d 删 %d' %
+                    ('%s/%s' % f, len(items), min(keep, len(items)), max(0, len(items) - keep)))
+          if kept_protected:
+              print('  白名单: %s' % ', '.join(sorted(r['tag_name'] for r in kept_protected)))
+
+          for f, r in plan:
+              tag = r['tag_name']
+              print('  %s %-26s %s  %s' % ('将删' if dry else '删除', '%s/%s' % f, tag[:44],
+                                           (r.get('published_at') or r.get('created_at') or '')[:10]))
+              if not dry:
+                  p = gh('release', 'delete', tag, '--repo', repo, '--cleanup-tag', '--yes', check=False)
+                  if p.returncode != 0:
+                      FAIL += 1
+                      print('    ::warning::删除失败 %s：%s' % (tag, p.stderr.strip()[:160]))
+
+          print('删除失败 %d 条' % FAIL)
+
+          # ------------------------------------------------- Step Summary
+          rows = ['', '#### %s' % repo,
+                  '| 设备/分支 | 现有 | 保留 | 删除 |', '|---|---|---|---|']
+          for f, items in sorted(groups.items()):
+              rows.append('| %s / %s | %d | %d | %d |' %
+                          (f[0], f[1], len(items), min(keep, len(items)), max(0, len(items) - keep)))
+          rows.append('')
+          rows.append('白名单（不参与清理）：%s' % (', '.join(sorted(r['tag_name'] for r in kept_protected)) or '无'))
+          rows.append('')
+          rows.append('本次 %s，删除失败 %d 条。' % ('仅演练未删除' if dry else '已执行删除', FAIL))
+          summary = os.environ.get('GITHUB_STEP_SUMMARY')
+          if summary:
+              with open(summary, 'a', encoding='utf-8') as fh:
+                  fh.write('\n'.join(rows) + '\n')
+
+          # ------------------------------------------------- 索引数据
+          if pages_out:
+              fresh = list_releases(repo)
+              g2 = {}
+              for r in fresh:
+                  f = family(r)
+                  if f is None:
+                      continue
+                  g2.setdefault(f, []).append(r)
+              data = {}
+              for f, items in g2.items():
+                  items.sort(key=lambda r: r.get('published_at') or r.get('created_at') or '', reverse=True)
+                  data['%s|%s' % f] = [{
+                      'tag': r['tag_name'],
+                      'date': (r.get('published_at') or r.get('created_at') or '')[:10],
+                      'main': pick_main_asset(r),
+                      'assets': len(r.get('assets', [])),
+                      'url': r['html_url'],
+                  } for r in items[:keep]]
+              with open(pages_out, 'w', encoding='utf-8') as fh:
+                  json.dump({'repo': repo, 'groups': data}, fh, ensure_ascii=False)
+
+          sys.exit(1 if FAIL else 0)
+          PYEOF
+
+      - name: 生成固件索引 RELEASES.md
+        if: always()
+        env:
+          TARGET_REPO: ${{ github.repository }}
+          INDEX_JSON: /tmp/release-index.json
+          OUT: RELEASES.md
+        run: |
+          python3 - <<'PYEOF'
+          #!/usr/bin/env python3
+          # -*- coding: utf-8 -*-
+          """按 prune_releases.py 产出的索引 JSON 生成 RELEASES.md。
+
+          环境变量：
+            TARGET_REPO   仓库全名（用于拼下载直链）
+            INDEX_JSON    prune 步骤导出的 JSON 路径
+            OUT           输出文件路径（默认 RELEASES.md）
+            MIRROR_REPO   可选，镜像仓（UP 的固件仓），用于给同 tag 加一条直链
+          """
+          import json
+          import os
+
+          repo = os.environ['TARGET_REPO']
+          src = os.environ['INDEX_JSON']
+          out = os.environ.get('OUT') or 'RELEASES.md'
+          mirror = os.environ.get('MIRROR_REPO', '').strip()
+
+          data = json.load(open(src, encoding='utf-8'))
+          groups = data.get('groups', {})
+
+          by_dev = {}
+          for key, items in groups.items():
+              dev, br = key.split('|', 1)
+              by_dev.setdefault(dev, {})[br] = items
+
+          def dl(tag, asset):
+              return 'https://github.com/%s/releases/download/%s/%s' % (repo, tag, asset)
+
+          def cell(s):
+              return (s or '').replace('|', '\\|')
+
+          lines = [
+              '# 固件索引（自动生成）',
+              '',
+              '> 本文件由 `.github/workflows/prune-releases.yml` 每周自动刷新，**不要手工编辑**。',
+              '> 每组只列最近几条；点「主固件」直接下载，不需要在 Releases 页翻页。',
+              '> 完整历史（超过本表范围）见 [Releases](../../releases)。',
+              '',
+          ]
+
+          for dev in sorted(by_dev):
+              for br in sorted(by_dev[dev], reverse=True):
+                  items = by_dev[dev][br]
+                  if not items:
+                      continue
+                  lines.append('## %s · %s' % (dev, br))
+                  lines.append('')
+                  if mirror:
+                      lines.append('| 版本 | 主固件（本仓） | 主固件（固件仓 / 设备升级源） | 资产 | 日期 |')
+                      lines.append('|---|---|---|---|---|')
+                  else:
+                      lines.append('| 版本 | 主固件 | 资产 | 日期 |')
+                      lines.append('|---|---|---|---|')
+                  for it in items:
+                      tag = it['tag']
+                      main = it.get('main') or ''
+                      main_cell = '[%s](%s)' % (cell(main), dl(tag, main)) if main else '—'
+                      if mirror:
+                          m_cell = '[同版本](https://github.com/%s/releases/tag/%s)' % (mirror, tag)
+                          lines.append('| [%s](%s) | %s | %s | %d | %s |' % (
+                              cell(tag), it['url'], main_cell, m_cell, it.get('assets', 0), it.get('date', '')))
+                      else:
+                          lines.append('| [%s](%s) | %s | %d | %s |' % (
+                              cell(tag), it['url'], main_cell, it.get('assets', 0), it.get('date', '')))
+                  lines.append('')
+
+          text = '\n'.join(lines).rstrip() + '\n'
+          old = ''
+          if os.path.exists(out):
+              old = open(out, encoding='utf-8').read()
+          if old == text:
+              print('RELEASES.md 无变化，跳过提交')
+              print('CHANGED=false')
+              raise SystemExit(0)
+          open(out, 'w', encoding='utf-8', newline='\n').write(text)
+          print('RELEASES.md 已更新：%d 行 / %d 字节' % (text.count('\n'), len(text.encode())))
+          print('CHANGED=true')
+          PYEOF
+
+      - name: 提交索引变更
+        if: ${{ env.DRY != 'true' }}
+        run: |
+          # 现有构建线只由 schedule / workflow_dispatch / repository_dispatch 触发，
+          # 这次提交不会带起任何编译；仍然加 [skip ci] 双保险。
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # 先 add 再比对：RELEASES.md 首次生成时是未跟踪文件，git diff 看不到它
+          git add RELEASES.md
+          if git diff --cached --quiet; then
+            echo "RELEASES.md 无变化，无需提交"
+            exit 0
+          fi
+          git commit -m 'chore: 刷新固件索引 [skip ci]'
+          git push
