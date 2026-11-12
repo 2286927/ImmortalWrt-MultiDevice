@@ -2,6 +2,7 @@
 # ============================================================
 # autoupdate — OpenWrt/ImmortalWrt 通用值守式固件检查/升级
 # 数据源：本仓库 GitHub Releases 固定 tag `autoupdate`（releases/download/autoupdate）
+# 镜像：内置列表按实测速度排序（2026-11-12 校准），失败自动降级下一个
 # 依赖：curl（或 uclient-fetch + libustream）、sha256sum、sysupgrade
 # 用法：
 #   autoupdate check        检查更新（cron 调用，含随机延迟）
@@ -57,12 +58,18 @@ get_mirrors() { # 输出候选（每行一个；"-"=直连）
         auto|"")
             # 上次成功的镜像优先（重启后记忆失效，重新探测）
             [ -s "$MIRROR_MEM_FILE" ] && cat "$MIRROR_MEM_FILE"
+            # 2026-11-12 从设备侧实测重排（10MB 分段测速，先快后慢）：
+            #   ghfast           1031 KB/s   118MB 约 1.9 分钟
+            #   ghproxy.imciel    486 KB/s   约 4 分钟
+            #   gh.monlor         171 KB/s   约 11.5 分钟
+            #   gh-proxy.com      132 KB/s   约 15 分钟
+            # 已下线（实测 DNS 失效/连接超时，保留只会白等 18-24s）：
+            #   ghproxy.net / gh.llkk.cc / mirror.ghproxy.com / gh-proxy.org
             printf '%s\n' \
                 "https://ghfast.top/" \
+                "https://ghproxy.imciel.com/" \
+                "https://gh.monlor.com/" \
                 "https://gh-proxy.com/" \
-                "https://ghproxy.net/" \
-                "https://gh.llkk.cc/" \
-                "https://mirror.ghproxy.com/" \
                 "-"
             ;;
         *) # 自定义加速前缀优先，失败回退直连
