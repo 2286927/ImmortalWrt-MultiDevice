@@ -1,0 +1,34 @@
+#!/bin/sh
+# ============================================================
+# 99-autoupdate-maint — 首次启动自愈（随固件出厂）
+#
+# 背景：sysupgrade 保留配置时，overlay 里的 /etc/crontabs/root 会
+#       覆盖固件注入的 cron 条目（diy-part2 写进 files/ 的那份会失效）。
+#       本脚本在首次启动（overlay 已挂载后）补齐缺失条目。
+# ============================================================
+
+[ -x /usr/bin/autoupdate-maint ] || exit 0
+
+touch /etc/crontabs/root 2>/dev/null
+
+add_cron() {
+    grep -qF "$1" /etc/crontabs/root 2>/dev/null || echo "$1" >> /etc/crontabs/root
+}
+
+add_cron "40 4 * * * /usr/bin/autoupdate check"
+add_cron "30 3 * * * /usr/bin/autoupdate-maint run"
+
+# 状态文件加入刷机保留清单（脚本本体由固件提供，不该保留，否则 overlay 旧版会覆盖固件新版）
+touch /etc/sysupgrade.conf
+grep -qF "/etc/autoupdate-maint.state" /etc/sysupgrade.conf 2>/dev/null || \
+    echo "/etc/autoupdate-maint.state" >> /etc/sysupgrade.conf
+
+# 若固件已自带脚本，清掉历史遗留的「保留脚本本体」条目，解除版本冻结
+if [ -f /rom/usr/bin/autoupdate-maint ]; then
+    sed -i '\|^/usr/bin/autoupdate-maint$|d' /etc/sysupgrade.conf 2>/dev/null
+fi
+
+/etc/init.d/cron restart >/dev/null 2>&1
+logger -t autoupdate-maint "uci-defaults: cron 与 sysupgrade 保留清单已自愈"
+
+exit 0
