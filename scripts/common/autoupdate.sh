@@ -58,17 +58,17 @@ get_mirrors() { # 输出候选（每行一个；"-"=直连）
         auto|"")
             # 上次成功的镜像优先（重启后记忆失效，重新探测）
             [ -s "$MIRROR_MEM_FILE" ] && cat "$MIRROR_MEM_FILE"
-            # 2026-11-12 从设备侧实测重排（10MB 分段测速，先快后慢）：
-            #   ghfast           1031 KB/s   118MB 约 1.9 分钟
-            #   ghproxy.imciel    486 KB/s   约 4 分钟
-            #   gh.monlor         171 KB/s   约 11.5 分钟
-            #   gh-proxy.com      132 KB/s   约 15 分钟
-            # 已下线（实测 DNS 失效/连接超时，保留只会白等 18-24s）：
-            #   ghproxy.net / gh.llkk.cc / mirror.ghproxy.com / gh-proxy.org
+            # 由 autoupdate-maint 自动维护（2026-11-13，设备侧 10MB 分段实测，快→慢）
+            #   gh.monlor.com                 991 KB/s
+            #   gh-proxy.org                  442 KB/s
+            #   ghfast.top                    439 KB/s
+            #   ghproxy.imciel.com            396 KB/s
+            #   gh-proxy.com                  172 KB/s
             printf '%s\n' \
+                "https://gh.monlor.com/" \
+                "https://gh-proxy.org/" \
                 "https://ghfast.top/" \
                 "https://ghproxy.imciel.com/" \
-                "https://gh.monlor.com/" \
                 "https://gh-proxy.com/" \
                 "-"
             ;;
