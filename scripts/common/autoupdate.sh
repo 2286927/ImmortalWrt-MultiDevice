@@ -59,16 +59,16 @@ get_mirrors() { # 输出候选（每行一个；"-"=直连）
             # 上次成功的镜像优先（重启后记忆失效，重新探测）
             [ -s "$MIRROR_MEM_FILE" ] && cat "$MIRROR_MEM_FILE"
             # 由 autoupdate-maint 自动维护（2026-11-13，设备侧 10MB 分段实测，快→慢）
-            #   gh.monlor.com                 991 KB/s
-            #   gh-proxy.org                  442 KB/s
-            #   ghfast.top                    439 KB/s
-            #   ghproxy.imciel.com            396 KB/s
-            #   gh-proxy.com                  172 KB/s
+            #   ghfast.top                   1265 KB/s
+            #   gh.monlor.com                1042 KB/s
+            #   ghproxy.imciel.com            757 KB/s
+            #   gh-proxy.org                  354 KB/s
+            #   gh-proxy.com                  106 KB/s
             printf '%s\n' \
-                "https://gh.monlor.com/" \
-                "https://gh-proxy.org/" \
                 "https://ghfast.top/" \
+                "https://gh.monlor.com/" \
                 "https://ghproxy.imciel.com/" \
+                "https://gh-proxy.org/" \
                 "https://gh-proxy.com/" \
                 "-"
             ;;
