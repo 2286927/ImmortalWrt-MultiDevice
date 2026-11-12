@@ -711,7 +711,11 @@ jobs:
           RET=${PIPESTATUS[0]}
           kill $monitor_pid || true
           if [ $RET -ne 0 ]; then
-            echo "❌ 编译失败！"
+            echo "❌ 编译失败！开始 verbose 诊断（target/linux）..."
+            echo "::group::target/linux 详细错误"
+            make -j1 V=s target/linux/compile 2>&1 | tail -200 || true
+            echo "::endgroup::"
+            echo "❌ 诊断输出结束"
             exit 1
           fi
           # -------------------------
