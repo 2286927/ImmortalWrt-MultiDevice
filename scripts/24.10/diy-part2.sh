@@ -253,5 +253,37 @@ else
     echo "⚠️  未找到 autoupdate.sh，跳过值守升级注入"
 fi
 
+# ── 3b. 镜像自动维护（autoupdate-maint）────────────────────────
+# 出厂自带：脚本 + 默认配置 + uci-defaults 首次启动自愈
+# token 不进固件（凭据不入版本库），首次使用需用户放置到 /etc/config/.gh_token
+MAINT_SRC="$MYDIR/../common/autoupdate-maint.sh"
+MAINT_CONF="$MYDIR/../common/autoupdate-maint.conf"
+MAINT_DEFAULTS="$MYDIR/../common/autoupdate-maint.defaults"
+
+if [ -f "$MAINT_SRC" ]; then
+    mkdir -p files/usr/bin files/etc/config files/etc/uci-defaults files/etc/crontabs
+    install -m 755 "$MAINT_SRC" files/usr/bin/autoupdate-maint
+
+    if [ -f "$MAINT_CONF" ]; then
+        install -m 644 "$MAINT_CONF" files/etc/config/autoupdate-maint
+    else
+        echo "⚠️  未找到 autoupdate-maint.conf，跳过默认配置注入"
+    fi
+
+    if [ -f "$MAINT_DEFAULTS" ]; then
+        install -m 755 "$MAINT_DEFAULTS" files/etc/uci-defaults/99-autoupdate-maint
+    else
+        echo "⚠️  未找到 autoupdate-maint.defaults，跳过首次启动自愈注入"
+    fi
+
+    if ! grep -q "autoupdate-maint" files/etc/crontabs/root 2>/dev/null; then
+        echo "30 3 * * * /usr/bin/autoupdate-maint run" >> files/etc/crontabs/root
+    fi
+
+    echo ">>> 镜像自动维护注入完成：$(wc -c < files/usr/bin/autoupdate-maint) 字节（token 需用户放置）"
+else
+    echo "⚠️  未找到 autoupdate-maint.sh，跳过镜像自动维护注入"
+fi
+
 echo -e "\n===== diy-part2.sh（24.10）执行结束 ====="
 echo ""
