@@ -11,6 +11,16 @@ echo "执行时间：$(date '+%Y-%m-%d %H:%M:%S %Z')"
 
 MYDIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
+# ── 0. 上游补丁失配临时规避（仅 rockchip 线）──────────────────
+# 2026-11-11 上游 Merge Official Source 后，rockchip 的 041-30 补丁 7 个 hunk 全部
+# FAILED（drivers/gpu/drm/rockchip/rockchip_drm_vop2.c 上下文变动，前一条 041-29
+# 已出现 fuzz 2 / offset 18）。该补丁仅把 dev_err 换成 dev_err_probe，移除不影响功能。
+ROCKCHIP_BAD_PATCH="target/linux/rockchip/patches-6.12/041-30-v6.15-drm-rockchip-vop2-Consistently-use-dev_err_probe.patch"
+if [ -f "$ROCKCHIP_BAD_PATCH" ]; then
+    rm -f "$ROCKCHIP_BAD_PATCH"
+    echo ">>> 已移除上游失配补丁：$(basename "$ROCKCHIP_BAD_PATCH")"
+fi
+
 # ── 1. 修改 LAN 默认 IP 与主机名 ───────────────────────────────
 CONFIG_FILE="package/base-files/files/bin/config_generate"
 
