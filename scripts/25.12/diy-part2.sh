@@ -672,15 +672,23 @@ else
     echo ">>> 非 r68s 机型，跳过 dns-switch 接入"
 fi
 
-# ── rust 下载源预检（仅 r68s，纯诊断，不做任何规避）──────────
-# dufs（实机在用）的 Makefile 声明 PKG_BUILD_DEPENDS:=rust/host，
-# rust 1.96.0 编译需下载 CI LLVM 与 bootstrap；前两轮均在 2 分钟内失败。
-# 用户决定保留 dufs，故此处只探测下载源可达性并留在日志里，
-# 判断失败是否出在网络环节；rust feed 与 dufs 均保持原样。
+# ── rust CI LLVM 制品失效规避（仅 r68s，保住 dufs）────────────
+# 第四轮 V=s 诊断确诊：dl/rustc-1.96.0-src.tar.xz 下载成功（241 MB），
+# 但 rust 的 x.py 按固定 commit 从 CI 下载 LLVM 预编译制品返回
+# curl (22) 404 ×4 → ERROR: failed to download llvm from ci。
+# 上游 lang/rust/Makefile 写死 --set=llvm.download-ci-llvm=true，
+# Config.in 没有对应开关。这里改为 false，让 rust 用 rustc-src 自带的
+# src/llvm-project 从源码编译 LLVM，绕开已失效的 CI 制品。
+# 代价：LLVM 从源码编译会显著拉长构建时间；不砍 dufs、不动包仓接线。
+# ⚠️ 临时规避：等上游 rust 包换掉失效的 CI LLVM commit 后应删除本段。
 if [[ "${DEVICE_MODEL:-}" == "r68s" ]]; then
-    echo ">>> rust 下载源预检开始（仅诊断）"
-    curl -sI -m 20 https://static.rust-lang.org/dist/rustc-1.96.0-src.tar.xz 2>&1 | head -4 || true
-    echo ">>> rust 下载源预检结束"
+    for _ds_mk in feeds/packages/lang/rust/Makefile ../feeds/packages/lang/rust/Makefile; do
+        if [ -f "$_ds_mk" ]; then
+            sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' "$_ds_mk"
+            echo ">>> 已关闭 rust CI LLVM 下载：$_ds_mk"
+            grep -n 'download-ci-llvm' "$_ds_mk" || true
+        fi
+    done
 fi
 
 echo -e "\n===== diy-part2.sh（25.12）执行结束 ====="
