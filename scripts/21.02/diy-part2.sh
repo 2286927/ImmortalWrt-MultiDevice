@@ -252,8 +252,9 @@ fi
 # LuCI 状态总览 /cgi-bin/luci/admin/status/overview 会扫描
 #   /www/luci-static/resources/view/status/include/*.js 并逐栏渲染。
 # 这里只放提示栏；切换命令本体见上文第 3 段 /usr/bin/{print-mode,scan-mode}。
+# 文件名 15_ 使本栏按字典序紧跟 10_system.js（系统）之后、排在 20_memory.js（内存）之前。
 mkdir -p files/www/luci-static/resources/view/status/include
-cat > files/www/luci-static/resources/view/status/include/99_y1_mode.js <<'Y1MODE_EOF'
+cat > files/www/luci-static/resources/view/status/include/15_y1_mode.js <<'Y1MODE_EOF'
 'use strict';
 'require baseclass';
 
@@ -288,7 +289,7 @@ return baseclass.extend({
 	}
 });
 Y1MODE_EOF
-chmod 644 files/www/luci-static/resources/view/status/include/99_y1_mode.js
+chmod 644 files/www/luci-static/resources/view/status/include/15_y1_mode.js
 echo ">>> y1 状态页已注入「打印/扫描模式切换」栏（print-mode / scan-mode）"
 
 echo -e "\n===== diy-part2.sh（21.02）执行结束 ====="
