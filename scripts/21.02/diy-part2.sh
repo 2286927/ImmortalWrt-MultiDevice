@@ -248,5 +248,48 @@ else
     echo "⚠️  未找到 autoupdate-maint.sh，跳过镜像自动维护注入"
 fi
 
+# ── 4. 状态页「打印/扫描模式切换」栏（y1 出厂自带）────────────────
+# LuCI 状态总览 /cgi-bin/luci/admin/status/overview 会扫描
+#   /www/luci-static/resources/view/status/include/*.js 并逐栏渲染。
+# 这里只放提示栏；切换命令本体见上文第 3 段 /usr/bin/{print-mode,scan-mode}。
+mkdir -p files/www/luci-static/resources/view/status/include
+cat > files/www/luci-static/resources/view/status/include/99_y1_mode.js <<'Y1MODE_EOF'
+'use strict';
+'require baseclass';
+
+/*
+ * Newifi Y1 - 状态页「打印/扫描模式切换」栏
+ * 编译时由 scripts/21.02/diy-part2.sh 注入 files/，刷机即出厂自带。
+ * 命令本体：/usr/bin/print-mode、/usr/bin/scan-mode（同脚本第 3 段注入）。
+ * LuCI 会扫描 /www/luci-static/resources/view/status/include/*.js 并逐栏渲染。
+ */
+return baseclass.extend({
+	title: _('打印/扫描模式切换'),
+
+	render: function() {
+		return E('table', { 'class': 'table' }, [
+			E('tr', { 'class': 'tr' }, [
+				E('td', { 'class': 'td left', 'width': '33%' }, [
+					E('code', {}, 'print-mode')
+				]),
+				E('td', { 'class': 'td left' }, [
+					'# 切到打印共享模式'
+				])
+			]),
+			E('tr', { 'class': 'tr' }, [
+				E('td', { 'class': 'td left', 'width': '33%' }, [
+					E('code', {}, 'scan-mode')
+				]),
+				E('td', { 'class': 'td left' }, [
+					'# 切到扫描模式'
+				])
+			])
+		]);
+	}
+});
+Y1MODE_EOF
+chmod 644 files/www/luci-static/resources/view/status/include/99_y1_mode.js
+echo ">>> y1 状态页已注入「打印/扫描模式切换」栏（print-mode / scan-mode）"
+
 echo -e "\n===== diy-part2.sh（21.02）执行结束 ====="
 echo ""
