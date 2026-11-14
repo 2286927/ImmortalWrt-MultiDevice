@@ -9,14 +9,14 @@
 | 设备 | 平台 | 版本线 | 说明 |
 |---|---|---|---|
 | CM520-79F | Qualcomm IPQ40xx | 24.10 / 25.12 | |
-| Globitel BT-R320 | MediaTek MT7981（Filogic 820） | 25.12 | eMMC，2.5G 网口 |
+| Globitel BT-R320 | MediaTek MT7981（Filogic 820） | 25.12 | eMMC，千兆 |
 | 极路由 HC5962 | MediaTek MT7621 | 24.10 / 25.12 | |
 | 联想 Newifi D1 | MediaTek MT7621 | 24.10 / 25.12 | |
 | 联想 Newifi D2 | MediaTek MT7621 | 24.10 / 25.12 | |
 | 联想 Newifi Y1 | MediaTek MT7620 | 21.02 / 23.05 / 24.10 / 25.12 | 小内存设备；21.02 线含 USB 打印/扫描双模式 |
 | OCTOPUS | AMLogic S912（ARMv8） | 24.10 / 25.12 | 单网口定制 |
 | 玩客云 OneCloud | AMLogic S805 | 24.10 / 25.12 | 单网口客户端模式，eMMC |
-| R68S | Rockchip RK3568 | 24.10 / 25.12 | 双千兆 |
+| R68S | Rockchip RK3568 | 24.10 / 25.12 | 双2.5G 网口 |
 | CMCC RAX3000M | MediaTek MT7986（Filogic 830） | 24.10 / 25.12 | eMMC 版 |
 
 ## 主要功能
