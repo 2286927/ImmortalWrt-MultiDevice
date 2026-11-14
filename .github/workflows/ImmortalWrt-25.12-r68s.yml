@@ -715,13 +715,15 @@ jobs:
             echo "::group::target/linux 详细错误"
             make -j1 V=s target/linux/compile 2>&1 | tail -200 || true
             echo "::endgroup::"
-            echo "::group::rust 选型与详细错误"
-            grep -n -i 'rust' .config | head -30 || true
-            if [ -d feeds/packages/lang/rust ]; then
-              make -j1 V=s package/feeds/packages/rust/host/compile 2>&1 | tail -150 || true
-            else
-              echo "rust feed 已摘除，无需诊断"
-            fi
+            echo "::group::rust / dufs 选型与详细错误"
+            echo "--- .config 中 rust / dufs 相关项 ---"
+            grep -n -i 'rust\|dufs' .config | head -40 || true
+            echo "--- dl 目录中 rust 下载产物 ---"
+            ls -la dl/rustc* dl/rust* 2>/dev/null | head -20 || true
+            echo "--- rust host 包 V=s 单独重跑（末 200 行）---"
+            make -j1 V=s package/feeds/packages/rust/host/compile 2>&1 | tail -200 || true
+            echo "--- build.log 中 rust 上下文 ---"
+            grep -n -i -B3 -A8 'rust' build.log | tail -60 || true
             echo "::endgroup::"
 
             echo "❌ 诊断输出结束"

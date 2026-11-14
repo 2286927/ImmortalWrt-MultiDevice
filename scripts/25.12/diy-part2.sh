@@ -672,19 +672,15 @@ else
     echo ">>> 非 r68s 机型，跳过 dns-switch 接入"
 fi
 
-# ── rust host-only 包规避（仅 r68s）────────────────────────────
-# feeds/packages/lang/rust 是 PKG_HOST_ONLY:=1 的纯 host 工具包，
-# 1.96.0 编译需下载 CI LLVM 与 bootstrap（llvm.download-ci-llvm=true），
-# 本构建环境该阶段 2 分钟内必失败；CONFIG_PACKAGE_rust=n 管不到 host 依赖链。
-# 本线 config 中所有 rust 生态包均为 is not set，摘除后不影响固件功能。
-# ⚠️ 临时规避：等 rust host 包能正常下载/构建后应删除本段。
+# ── rust 下载源预检（仅 r68s，纯诊断，不做任何规避）──────────
+# dufs（实机在用）的 Makefile 声明 PKG_BUILD_DEPENDS:=rust/host，
+# rust 1.96.0 编译需下载 CI LLVM 与 bootstrap；前两轮均在 2 分钟内失败。
+# 用户决定保留 dufs，故此处只探测下载源可达性并留在日志里，
+# 判断失败是否出在网络环节；rust feed 与 dufs 均保持原样。
 if [[ "${DEVICE_MODEL:-}" == "r68s" ]]; then
-    for _ds_rust in feeds/packages/lang/rust ../feeds/packages/lang/rust; do
-        if [ -d "$_ds_rust" ]; then
-            rm -rf "$_ds_rust"
-            echo ">>> 已摘除 rust host-only feed：$_ds_rust"
-        fi
-    done
+    echo ">>> rust 下载源预检开始（仅诊断）"
+    curl -sI -m 20 https://static.rust-lang.org/dist/rustc-1.96.0-src.tar.xz 2>&1 | head -4 || true
+    echo ">>> rust 下载源预检结束"
 fi
 
 echo -e "\n===== diy-part2.sh（25.12）执行结束 ====="
