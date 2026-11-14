@@ -270,7 +270,7 @@ return baseclass.extend({
 		return E('table', { 'class': 'table' }, [
 			E('tr', { 'class': 'tr' }, [
 				E('td', { 'class': 'td left', 'width': '33%' }, [
-					E('code', {}, 'print-mode')
+					E('code', {}, [ 'print-mode' ])
 				]),
 				E('td', { 'class': 'td left' }, [
 					'# 切到打印共享模式'
@@ -278,7 +278,7 @@ return baseclass.extend({
 			]),
 			E('tr', { 'class': 'tr' }, [
 				E('td', { 'class': 'td left', 'width': '33%' }, [
-					E('code', {}, 'scan-mode')
+					E('code', {}, [ 'scan-mode' ])
 				]),
 				E('td', { 'class': 'td left' }, [
 					'# 切到扫描模式'
