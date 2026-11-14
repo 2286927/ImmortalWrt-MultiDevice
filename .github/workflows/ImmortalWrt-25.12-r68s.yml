@@ -715,6 +715,15 @@ jobs:
             echo "::group::target/linux 详细错误"
             make -j1 V=s target/linux/compile 2>&1 | tail -200 || true
             echo "::endgroup::"
+            echo "::group::rust 选型与详细错误"
+            grep -n -i 'rust' .config | head -30 || true
+            if [ -d feeds/packages/lang/rust ]; then
+              make -j1 V=s package/feeds/packages/rust/host/compile 2>&1 | tail -150 || true
+            else
+              echo "rust feed 已摘除，无需诊断"
+            fi
+            echo "::endgroup::"
+
             echo "❌ 诊断输出结束"
             exit 1
           fi

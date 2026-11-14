@@ -672,5 +672,20 @@ else
     echo ">>> 非 r68s 机型，跳过 dns-switch 接入"
 fi
 
+# ── rust host-only 包规避（仅 r68s）────────────────────────────
+# feeds/packages/lang/rust 是 PKG_HOST_ONLY:=1 的纯 host 工具包，
+# 1.96.0 编译需下载 CI LLVM 与 bootstrap（llvm.download-ci-llvm=true），
+# 本构建环境该阶段 2 分钟内必失败；CONFIG_PACKAGE_rust=n 管不到 host 依赖链。
+# 本线 config 中所有 rust 生态包均为 is not set，摘除后不影响固件功能。
+# ⚠️ 临时规避：等 rust host 包能正常下载/构建后应删除本段。
+if [[ "${DEVICE_MODEL:-}" == "r68s" ]]; then
+    for _ds_rust in feeds/packages/lang/rust ../feeds/packages/lang/rust; do
+        if [ -d "$_ds_rust" ]; then
+            rm -rf "$_ds_rust"
+            echo ">>> 已摘除 rust host-only feed：$_ds_rust"
+        fi
+    done
+fi
+
 echo -e "\n===== diy-part2.sh（25.12）执行结束 ====="
 echo ""
