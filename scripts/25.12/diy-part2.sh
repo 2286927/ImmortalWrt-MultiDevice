@@ -691,5 +691,54 @@ if [[ "${DEVICE_MODEL:-}" == "r68s" ]]; then
     done
 fi
 
+# ── vsftpd 换成 TLS 版（仅 r68s）────────────────────────────────────────
+# 背景：固件默认装 vsftpd(no TLS)，公网 FTPS 必须 ssl_enable=YES，而该变体没编进
+# SSL —— 写进去的表现是进程静默 rc=2 退出、stderr 一个字不输出，极难排查。
+# 上游虽有 vsftpd-tls 变体，但它 CONFLICTS:=vsftpd，而 luci-app-vsftpd 硬依赖
+# +vsftpd，两者同时选中会在镜像组装阶段冲突失败。
+# 所以这里不改包名、不改 config，只把 vsftpd 自己的 notls 编译分支改成带 SSL：
+#   builddefs.h 的 #undef VSF_BUILD_SSL → #define、链接补 -lssl -lcrypto、DEPENDS 补 +libopenssl
+# 效果：固件里的 `vsftpd` 包本身就是 TLS 版，升级不会回退，LuCI 页面照旧。
+if [[ "${DEVICE_MODEL:-}" == "r68s" ]]; then
+    _vsf_found=0
+    for _vsf_mk in feeds/packages/net/vsftpd/Makefile ../feeds/packages/net/vsftpd/Makefile; do
+        [ -f "$_vsf_mk" ] || continue
+        _vsf_found=1
+
+        # 幂等：notls 分支里已有 VSF_BUILD_SSL 就说明补过了
+        if awk '/^ifeq \(\$\(BUILD_VARIANT\),notls\)$/{f=1;next} f&&/^endif$/{f=0} f&&/VSF_BUILD_SSL/{h=1} END{exit(h?0:1)}' "$_vsf_mk"; then
+            echo ">>> vsftpd notls 分支已含 TLS 编译，跳过：$_vsf_mk"
+            continue
+        fi
+
+        cp -f "$_vsf_mk" "$_vsf_mk.diy-bak"
+        awk '
+            /^ifeq \(\$\(BUILD_VARIANT\),notls\)$/ { inb=1; print; next }
+            inb==1 && /^endif$/ { inb=0; print; next }
+            inb==1 && !done && /^[[:space:]]*\$\(SED\)/ {
+                print "\t$(SED) \"s/#undef VSF_BUILD_SSL/#define VSF_BUILD_SSL/\" $(PKG_BUILD_DIR)/builddefs.h"
+                print "\t$(SED) \"s/-lcrypt -lnsl/-lcrypt -lnsl -lssl -lcrypto/\" $(PKG_BUILD_DIR)/Makefile"
+                done=1
+            }
+            { print }
+        ' "$_vsf_mk.diy-bak" > "$_vsf_mk"
+        sed -i 's|^  DEPENDS:=+libuci$|  DEPENDS:=+libuci +libopenssl|' "$_vsf_mk"
+
+        # 断言：三处改动都必须在，否则宁可让构建失败，也不静默出货一个没 TLS 的固件
+        if awk '/^ifeq \(\$\(BUILD_VARIANT\),notls\)$/{f=1;next} f&&/^endif$/{f=0} f&&/VSF_BUILD_SSL/{h=1} END{exit(h?0:1)}' "$_vsf_mk" \
+           && grep -q 'lssl -lcrypto' "$_vsf_mk" \
+           && grep -q 'DEPENDS:=+libuci +libopenssl' "$_vsf_mk"; then
+            echo "✅ vsftpd notls 变体已改为带 TLS：$_vsf_mk"
+            grep -n 'VSF_BUILD_SSL\|libuci +libopenssl' "$_vsf_mk" | sed 's/^/    /'
+        else
+            echo "❌ vsftpd 补丁未生效（$_vsf_mk），中止构建"
+            exit 1
+        fi
+    done
+    [ "$_vsf_found" = "1" ] || { echo "❌ 未找到 feeds/packages/net/vsftpd/Makefile"; exit 1; }
+else
+    echo ">>> 非 r68s 机型，跳过 vsftpd TLS 化"
+fi
+
 echo -e "\n===== diy-part2.sh（25.12）执行结束 ====="
 echo ""
