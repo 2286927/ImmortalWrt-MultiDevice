@@ -672,7 +672,7 @@ else
     echo ">>> 非 r68s 机型，跳过 dns-switch 接入"
 fi
 
-# ── rust CI LLVM 制品失效规避（仅 r68s，保住 dufs）────────────
+# ── rust CI LLVM 制品失效规避（全 25.12 设备，保住 dufs）────────────
 # 第四轮 V=s 诊断确诊：dl/rustc-1.96.0-src.tar.xz 下载成功（241 MB），
 # 但 rust 的 x.py 按固定 commit 从 CI 下载 LLVM 预编译制品返回
 # curl (22) 404 ×4 → ERROR: failed to download llvm from ci。
@@ -680,16 +680,28 @@ fi
 # Config.in 没有对应开关。这里改为 false，让 rust 用 rustc-src 自带的
 # src/llvm-project 从源码编译 LLVM，绕开已失效的 CI 制品。
 # 代价：LLVM 从源码编译会显著拉长构建时间；不砍 dufs、不动包仓接线。
+#
+# 2026-11-17 修正范围：原先只在 DEVICE_MODEL==r68s 时生效，结果 11-16 定时
+# 构建里 cmcc_rax3000m / cm520 / octopus 三条 25.12 线同样死在
+# `package/feeds/packages/rust [host] failed to build`；bt-r320 / hc5962 显示
+# success 其实是「检测源码更新」无变更后 job 被 skip，并未真正编译。
+# 本脚本为 25.12 全设备共用，故去掉机型判断：凡装了 dufs
+# （PKG_BUILD_DEPENDS:=rust/host）的设备都要它；没装 rust 的线 sed 找不到
+# 文件自动跳过，无副作用。实测 r68s 打补丁后 rust 源码编 LLVM 约 1.5–2h，
+# 整轮构建 2h05 可完成，远低于 Actions 单 job 6h 上限。
 # ⚠️ 临时规避：等上游 rust 包换掉失效的 CI LLVM commit 后应删除本段。
-if [[ "${DEVICE_MODEL:-}" == "r68s" ]]; then
-    for _ds_mk in feeds/packages/lang/rust/Makefile ../feeds/packages/lang/rust/Makefile; do
-        if [ -f "$_ds_mk" ]; then
-            sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' "$_ds_mk"
-            echo ">>> 已关闭 rust CI LLVM 下载：$_ds_mk"
-            grep -n 'download-ci-llvm' "$_ds_mk" || true
+for _ds_mk in feeds/packages/lang/rust/Makefile ../feeds/packages/lang/rust/Makefile; do
+    if [ -f "$_ds_mk" ]; then
+        sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' "$_ds_mk"
+        echo ">>> 已关闭 rust CI LLVM 下载：$_ds_mk"
+        grep -n 'download-ci-llvm' "$_ds_mk" || true
+        # 硬门禁：替换没生效就当场停，别让 404 在 2 小时后才暴露
+        if grep -q 'llvm\.download-ci-llvm=true' "$_ds_mk"; then
+            echo "::error::rust CI LLVM 规避未生效，$_ds_mk 仍为 download-ci-llvm=true"
+            exit 1
         fi
-    done
-fi
+    fi
+done
 
 # ── vsftpd 换成 TLS 版（仅 r68s）────────────────────────────────────────
 # 背景：固件默认装 vsftpd(no TLS)，公网 FTPS 必须 ssl_enable=YES，而该变体没编进
