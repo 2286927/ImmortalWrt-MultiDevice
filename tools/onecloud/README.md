@@ -39,3 +39,18 @@ cd tools/onecloud && sha256sum -c SHA256SUMS
 
 上游发布新版本时：手工下载新文件覆盖本目录 → 同步更新本文件与 `SHA256SUMS` 中的版本号与校验值 → 提交。
 **不要**改回在脚本里 curl 下载。
+
+## env.PARTITION
+
+| 项 | 值 |
+|---|---|
+| 内容 | U-Boot 环境变量区（64 KiB，偏移 `0x800000`） |
+| sha256 | `991a9821f36f1414d00c757fbcfa0cea7380ad9e288227396a6861c1088bba54` |
+| 关键设置 | `bootdelay=0`（关闭 autoboot 按键窗口）、`bootretry=10`；**已删除 `ethaddr`** |
+| 其余变量 | 与厂商原厂 env 完全一致（`bootcmd`/`preboot`/`upgrade_step` 等未改动，线刷模式不受影响） |
+
+用途：由 `scripts/onecloud/convert3.sh` 打进直刷包（`PARTITION:env:normal:env.PARTITION`），
+使设备即使串口线悬空拾取噪声、或有人误按回车，也不会停在 `m8b_onecloud#` 提示符。
+
+更新方式：改 `bootdelay` 等变量后必须重算前 4 字节 CRC32（小端，覆盖后 64 KiB-4 字节），
+否则 U-Boot 判定 env 损坏并回退到编译期默认值。

@@ -32,6 +32,14 @@ chmod +x ./AmlImg
 cp "$DEP/uboot.img" ./uboot.img
 ./AmlImg unpack ./uboot.img burn/
 
+# ---- U-Boot env：随包写入，去掉 autoboot 按键窗口 ----
+# 目的：BootROM/U-Boot 的 abortboot 只要在 3 秒窗口内收到任意字节就停在
+#       `m8b_onecloud#` 提示符且永不重试；现场无串口时设备直接变砖，只能断电。
+# bootdelay=0 → 不再轮询按键；bootretry=10 → bootcmd 失败后自动重试。
+# env.PARTITION 必须是「设备原始 env 删掉 ethaddr、改 bootdelay/bootretry」的结果，
+# 保留 bootcmd/preboot/upgrade_step 等厂商变量，保证线刷模式行为不变。
+cp "$DEP/env.PARTITION" burn/env.PARTITION
+
 gunzip openwrt/bin/targets/*/*/*.gz
 diskimg=$(ls openwrt/bin/targets/*/*/*.img)
 loop=$(sudo losetup --find --show --partscan $diskimg)
@@ -93,10 +101,31 @@ sudo losetup -d $loop
 cat <<EOF >>burn/commands.txt
 PARTITION:boot:sparse:boot.simg
 PARTITION:rootfs:sparse:rootfs.simg
+PARTITION:env:normal:env.PARTITION
 EOF
 prefix=$(ls openwrt/bin/targets/*/*/*.img | sed 's/\.img$//')
 burnimg=${prefix}.burn.img
+# ---- env 落包前置校验（构建期失败优于出厂砖）----
+test -f burn/env.PARTITION || { echo "::error::burn/env.PARTITION 缺失，env 不会写入直刷包"; exit 1; }
+strings burn/env.PARTITION | grep -qx 'bootdelay=0' || { echo "::error::env.PARTITION 未设置 bootdelay=0"; exit 1; }
+if strings burn/env.PARTITION | grep -q '^ethaddr='; then
+  echo "::error::env.PARTITION 含 ethaddr —— 出厂会让所有设备同 MAC"; exit 1
+fi
+echo "[env] bootdelay=0 就绪，ethaddr 已剔除"
+
 ./AmlImg pack $burnimg burn/
+
+# ---- 回读自检（warn-only：解包命名若与预期不同，不阻断发布）----
+if ./AmlImg unpack "$burnimg" envcheck/ >/dev/null 2>&1 && [ -f envcheck/env.PARTITION ]; then
+  if strings envcheck/env.PARTITION | grep -qx 'bootdelay=0'; then
+    echo "[env] 直刷包内 env 校验通过"
+  else
+    echo "::warning::直刷包内 env 未含 bootdelay=0，请人工复核"
+  fi
+else
+  echo "::warning::未能解包回读 env（不阻断发布，需人工复核）"
+fi
+rm -rf envcheck
 for f in openwrt/bin/targets/*/*/*.burn.img; do
   sha256sum "$f" >"${f}.sha"
   xz -9 --threads=0 --compress "$f"
