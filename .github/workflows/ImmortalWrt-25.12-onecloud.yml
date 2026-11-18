@@ -683,6 +683,23 @@ jobs:
           grep -qE '^[0-9]{2}\.[0-9]{2}\.[0-9]{2}_[0-9]{2}\.[0-9]{2}\.[0-9]{2}$' files/etc/oc-version || { echo "::error::oc-version 内容格式异常"; exit 1; }
           test -s files/usr/bin/upgrade || { echo "::error::upgrade 命令注入失败"; exit 1; }
           grep -q '    --check) ;;' files/usr/bin/upgrade || { echo "::error::upgrade heredoc TAB 转义损坏"; exit 1; }
+      - name: r49 静态资源版本串随构建变化（根治浏览器缓存锁死）
+        working-directory: /workdir/openwrt
+        run: |
+          # 根因：LuCI 页面里 luci.js 的版本串是 `?v=<luci版本>-{{ pkgs_update_time }}`，
+          #       而 pkgs_update_time 取的是镜像内包数据库时间戳——ext4 打包统一成
+          #       SOURCE_DATE_EPOCH（上游提交时间）。同一上游反复构建 → 版本串一字不变 →
+          #       浏览器把旧的 luci-static 资源（含 10_system.js）当新文件长期复用，
+          #       改了也不生效（实机：11-17 固件页面仍显示 11-11 的构建日期）。
+          # 处置：把模板里的占位符替换成本次构建的 epoch——版本串每次构建唯一，缓存自然失效。
+          HUT=$(find feeds/luci -path '*luci-base*' -name header.ut 2>/dev/null | head -1)
+          [ -n "$HUT" ] || { echo "::error::r49 未找到 luci-base/ucode/template/header.ut"; exit 1; }
+          grep -q 'pkgs_update_time' "$HUT" || { echo "::error::r49 header.ut 已无 pkgs_update_time 占位符（上游改了？）"; exit 1; }
+          BUILD_EPOCH=$(date +%s)
+          sed -i "s/{{ pkgs_update_time }}/${BUILD_EPOCH}/g" "$HUT"
+          grep -q "luci.js?v={# PKG_VERSION #}-${BUILD_EPOCH}" "$HUT" || { echo "::error::r49 版本串注入失败"; exit 1; }
+          echo "BUILD_EPOCH=${BUILD_EPOCH}" >> $GITHUB_ENV
+          echo "PASS⑯ 静态资源版本串 = ${BUILD_EPOCH}（每次构建唯一，浏览器缓存随之失效）"
       - name: r48 升级审计与配置守护（独立步骤，避免单步 run 触发 21000 表达式上限）
         working-directory: /workdir/openwrt
         run: |
@@ -988,6 +1005,13 @@ jobs:
           tar -tzf "$RFS_TAR" | grep -q '^\./etc/init.d/oc-audit-watch$' || { echo "::error::⑭ 审计 watcher 未入包"; exit 1; }
           tar -xzOf "$RFS_TAR" ./sbin/sysupgrade 2>/dev/null | grep -q 'oc_audit_begin sysupgrade' || { echo "::error::⑭ sysupgrade 审计前导未入包"; exit 1; }
           echo "PASS⑭ 升级审计/配置守护入包"
+          # ⑯ r49: 静态资源版本串必须是本次构建 epoch（而不是镜像内包数据库时间）
+          if tar -xzOf "$RFS_TAR" ./usr/share/ucode/luci/template/header.ut 2>/dev/null | grep -q 'pkgs_update_time'; then
+            echo "::error::⑯ header.ut 仍是 pkgs_update_time 占位符（版本串不会随构建变化）"; exit 1
+          fi
+          tar -xzOf "$RFS_TAR" ./usr/share/ucode/luci/template/header.ut 2>/dev/null | grep -qE "luci\.js\?v=[^ \"]+-${BUILD_EPOCH}" \
+            || { echo "::error::⑯ 静态资源版本串不是本次构建 epoch（期望 $BUILD_EPOCH）"; exit 1; }
+          echo "PASS⑯ 静态资源版本串 = ${BUILD_EPOCH}"
           tar -xzOf "$RFS_TAR" ./etc/uci-defaults/99-root-password 2>/dev/null | grep -q 'passwd -d root' && echo "PASS⑨ 出厂空密码脚本在位" || { echo "::error::⑨99-root-password 缺失"; exit 1; }
           if ! tar -xzOf "$RFS_TAR" ./usr/lib/lua/luci/controller/socat.lua 2>/dev/null | grep -q 'entry'; then echo "::error::⑩luci-app-socat lua 注入缺失"; exit 1; fi
           if ! tar -tzf "$RFS_TAR" | grep -qE '^\./?usr/(s?bin)/socat$'; then echo "::error::⑩socat CLI 缺失"; exit 1; fi
