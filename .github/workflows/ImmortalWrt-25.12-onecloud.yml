@@ -514,35 +514,6 @@ jobs:
           grep -q 'oc_build_date="20' files/etc/uci-defaults/98-oc-build-date || { echo "::error::构建日期戳未写入"; exit 1; }
           grep -q 'oc_build_date' files/www/luci-static/resources/view/status/include/10_system.js || { echo "::error::10_system.js 未改为运行时读取构建日期"; exit 1; }
           if grep -q '__BUILD_DATE__' files/www/luci-static/resources/view/status/include/10_system.js; then echo "::error::10_system.js 仍含 __BUILD_DATE__ 占位符"; exit 1; fi
-          # r48: 升级审计 + 配置守护（root 每次 upgrade/sysupgrade 留痕；升级前密封备份、升级后自动核对）
-          mkdir -p files/usr/lib files/sbin files/etc/uci-defaults files/etc/init.d files/etc/rc.d
-          for f in oc-audit.sh oc-config-guard.sh oc-audit-watch.sh; do
-            cp -f "$GITHUB_WORKSPACE/scripts/onecloud/$f" "files/usr/lib/$f"
-          done
-          cp -f $GITHUB_WORKSPACE/scripts/onecloud/oc-audit-watch.init files/etc/init.d/oc-audit-watch
-          cp -f $GITHUB_WORKSPACE/scripts/onecloud/oc-postupgrade-check files/etc/uci-defaults/98-oc-postupgrade-check
-          chmod 755 files/usr/lib/oc-audit.sh files/usr/lib/oc-config-guard.sh files/usr/lib/oc-audit-watch.sh \
-                    files/etc/init.d/oc-audit-watch files/etc/uci-defaults/98-oc-postupgrade-check
-          ln -sf ../init.d/oc-audit-watch files/etc/rc.d/S96oc-audit-watch
-          # /sbin/sysupgrade 审计前导：LuCI「刷机/备份」页直接调 sysupgrade，升级外壳拦不到这个入口。
-          # 只在该脚本 shebang 之后插入审计与「待核对」标记，原脚本全文保留、逻辑不改。
-          SYSUP_SRC="package/base-files/files/sbin/sysupgrade"
-          if [ -f "$SYSUP_SRC" ]; then
-            sed -n '1p' "$SYSUP_SRC" > files/sbin/sysupgrade
-            cat >> files/sbin/sysupgrade <<'OCSUP'
-          . /usr/lib/oc-audit.sh 2>/dev/null || { oc_audit_begin(){ :; }; }
-          _nk=no; for _a in "$@"; do case "$_a" in -n|--nokeep|--force) _nk=yes ;; esac; done
-          oc_audit_begin sysupgrade "sysupgrade $*"
-          mkdir -p /opt/oc-audit 2>/dev/null
-          printf 'from=%s\nto=sysupgrade\nts=%s\nnokeep=%s\ncmd=sysupgrade %s\n' \
-            "$(sed -e 's/[[:space:]]//g' /etc/oc-version 2>/dev/null)" "$(date +%Y%m%d-%H%M%S)" "$_nk" "$*" \
-            > /opt/oc-audit/PENDING-UPGRADE 2>/dev/null
-          OCSUP
-            sed -n '2,$p' "$SYSUP_SRC" >> files/sbin/sysupgrade
-            chmod 755 files/sbin/sysupgrade
-          fi
-          grep -q 'oc_audit_begin sysupgrade' files/sbin/sysupgrade || { echo "::error::r48 sysupgrade 审计前导注入失败"; exit 1; }
-          [ -e files/etc/rc.d/S96oc-audit-watch ] || { echo "::error::r48 审计 watcher 未启用"; exit 1; }
 
           # r12: rootfs 固定 896M——去掉 rc.local 首启 resize2fs 扩容（不再占满整卡 eMMC）
           sed -i -e '/remount rw/d' -e '/resize2fs/d' ./files/etc/rc.local
@@ -705,6 +676,38 @@ jobs:
           grep -qE '^[0-9]{2}\.[0-9]{2}\.[0-9]{2}_[0-9]{2}\.[0-9]{2}\.[0-9]{2}$' files/etc/oc-version || { echo "::error::oc-version 内容格式异常"; exit 1; }
           test -s files/usr/bin/upgrade || { echo "::error::upgrade 命令注入失败"; exit 1; }
           grep -q '    --check) ;;' files/usr/bin/upgrade || { echo "::error::upgrade heredoc TAB 转义损坏"; exit 1; }
+      - name: r48 升级审计与配置守护（独立步骤，避免单步 run 触发 21000 表达式上限）
+        working-directory: /workdir/openwrt
+        run: |
+          # r48: 升级审计 + 配置守护（root 每次 upgrade/sysupgrade 留痕；升级前密封备份、升级后自动核对）
+          mkdir -p files/usr/lib files/sbin files/etc/uci-defaults files/etc/init.d files/etc/rc.d
+          for f in oc-audit.sh oc-config-guard.sh oc-audit-watch.sh; do
+            cp -f "$GITHUB_WORKSPACE/scripts/onecloud/$f" "files/usr/lib/$f"
+          done
+          cp -f $GITHUB_WORKSPACE/scripts/onecloud/oc-audit-watch.init files/etc/init.d/oc-audit-watch
+          cp -f $GITHUB_WORKSPACE/scripts/onecloud/oc-postupgrade-check files/etc/uci-defaults/98-oc-postupgrade-check
+          chmod 755 files/usr/lib/oc-audit.sh files/usr/lib/oc-config-guard.sh files/usr/lib/oc-audit-watch.sh \
+                    files/etc/init.d/oc-audit-watch files/etc/uci-defaults/98-oc-postupgrade-check
+          ln -sf ../init.d/oc-audit-watch files/etc/rc.d/S96oc-audit-watch
+          # /sbin/sysupgrade 审计前导：LuCI「刷机/备份」页直接调 sysupgrade，升级外壳拦不到这个入口。
+          # 只在该脚本 shebang 之后插入审计与「待核对」标记，原脚本全文保留、逻辑不改。
+          SYSUP_SRC="package/base-files/files/sbin/sysupgrade"
+          if [ -f "$SYSUP_SRC" ]; then
+            sed -n '1p' "$SYSUP_SRC" > files/sbin/sysupgrade
+            cat >> files/sbin/sysupgrade <<'OCSUP'
+          . /usr/lib/oc-audit.sh 2>/dev/null || { oc_audit_begin(){ :; }; }
+          _nk=no; for _a in "$@"; do case "$_a" in -n|--nokeep|--force) _nk=yes ;; esac; done
+          oc_audit_begin sysupgrade "sysupgrade $*"
+          mkdir -p /opt/oc-audit 2>/dev/null
+          printf 'from=%s\nto=sysupgrade\nts=%s\nnokeep=%s\ncmd=sysupgrade %s\n' \
+            "$(sed -e 's/[[:space:]]//g' /etc/oc-version 2>/dev/null)" "$(date +%Y%m%d-%H%M%S)" "$_nk" "$*" \
+            > /opt/oc-audit/PENDING-UPGRADE 2>/dev/null
+          OCSUP
+            sed -n '2,$p' "$SYSUP_SRC" >> files/sbin/sysupgrade
+            chmod 755 files/sbin/sysupgrade
+          fi
+          grep -q 'oc_audit_begin sysupgrade' files/sbin/sysupgrade || { echo "::error::r48 sysupgrade 审计前导注入失败"; exit 1; }
+          [ -e files/etc/rc.d/S96oc-audit-watch ] || { echo "::error::r48 审计 watcher 未启用"; exit 1; }
 
       - name: 内核/启动期日志修复（kernlog-fix）
         working-directory: /workdir/openwrt
