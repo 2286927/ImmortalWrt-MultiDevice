@@ -1,0 +1,38 @@
+#!/bin/sh
+# ============================================================================================
+# 98-oc-postupgrade-check — 升级后配置核对（由升级前写入的 PENDING-UPGRADE 标记触发）
+#   时机：新固件首启 /etc/uci-defaults 阶段（早于网络与服务启动，恢复配置最安全）
+#   动作：核对配置是否保留 → 缺失则从 /opt/oc-backup 最新归档补齐 → 复核 → 落审计与告警
+#   幂等：无 PENDING-UPGRADE 标记时直接跳过（普通重启不产生噪音）
+#   nokeep=yes（sysupgrade -n 主动清配置）：只报告不自动恢复，避免与用户意图相反
+# ============================================================================================
+PENDING="/opt/oc-audit/PENDING-UPGRADE"
+[ -f "$PENDING" ] || exit 0
+
+G=/usr/lib/oc-config-guard.sh
+if [ ! -f "$G" ]; then
+	logger -t oc-guard -p user.err "postflight 跳过：配置守护脚本缺失" 2>/dev/null
+	exit 0
+fi
+
+_nokeep=$(sed -n 's/^nokeep=//p' "$PENDING" 2>/dev/null)
+_sum=$(tr '\n' ' ' < "$PENDING" 2>/dev/null)
+logger -t oc-guard -p user.notice "升级后配置核对开始（$_sum）" 2>/dev/null
+
+if [ "$_nokeep" = "yes" ]; then
+	# 用户显式清配置升级：只做留档与告警，不自动恢复
+	sh "$G" postflight > /tmp/oc-postflight.out 2>&1
+	_rc=$?
+	logger -t oc-guard -p user.warn "本次为清配置升级（nokeep=yes），核对结果: $(tail -n1 /tmp/oc-postflight.out 2>/dev/null)" 2>/dev/null
+	echo "$(date '+%F %T') postflight-nokeep rc=$_rc $(tr '\n' ' ' < /tmp/oc-postflight.out 2>/dev/null | tail -c 300)" >> /opt/oc-upgrade.last 2>/dev/null
+	rm -f "$PENDING" 2>/dev/null
+	exit 0
+fi
+
+if sh "$G" postflight --restore; then
+	echo "$(date '+%F %T') postflight-ok" >> /opt/oc-upgrade.last 2>/dev/null
+	rm -f "$PENDING" 2>/dev/null
+else
+	logger -t oc-guard -p user.crit "升级后配置核对未通过，已保留 $PENDING 供重试；归档见 /opt/oc-backup（可执行 upgrade --restore-config）" 2>/dev/null
+fi
+exit 0
