@@ -489,10 +489,31 @@ jobs:
           # r31: LuCI 概览品牌四行（覆盖官方 10_system.js）
           mkdir -p files/www/luci-static/resources/view/status/include
           cp -f $GITHUB_WORKSPACE/scripts/onecloud/10_system.js files/www/luci-static/resources/view/status/include/10_system.js
-          # r36: 构建日期编译期注入（原 JS 正则从 release.description 提取——ubus system board 的
-          # description=OPENWRT_RELEASE 字符串不含日期，实机"构建日期"显示空白）→ 占位符直替。
-          sed -i "s/__BUILD_DATE__/$(date '+%Y-%m-%d %H:%M')/" files/www/luci-static/resources/view/status/include/10_system.js
-          if grep -q '__BUILD_DATE__' files/www/luci-static/resources/view/status/include/10_system.js; then echo "::error::构建日期注入失败"; exit 1; fi
+          # r47: 构建日期改为【运行时读取】。原实现把日期 sed 进 10_system.js，但镜像打包会把全部
+          # 文件时间戳统一成 SOURCE_DATE_EPOCH（上游提交时间），同一上游反复构建时该文件
+          # size/mtime 全同，uhttpd 的 ETag（inode-size-mtime）也就全同 → 浏览器 If-None-Match 命中
+          # 304 继续用旧副本，页面构建日期永久停在第一次缓存的那一版（实机实锤：11-17 固件显示 11-11 16:48）。
+          # 改为编译期写入 UCI，JS 内容跨构建恒定，缓存再旧也不影响「构建日期」显示的真实性。
+          mkdir -p files/etc/uci-defaults
+          # 与 release tag / /etc/oc-version 完全同源（OWRT_DATE=yy.mm.dd_hh.mm.ss，UTC+8），
+          # 便于「页面构建日期」和「版本戳」互相对得上
+          if [ -n "${OWRT_DATE}" ]; then
+            OC_STAMP="20$(printf '%s' "$OWRT_DATE" | sed -E 's/^([0-9]{2})\.([0-9]{2})\.([0-9]{2})_([0-9]{2})\.([0-9]{2}).*$/\1-\2-\3 \4:\5/')"
+          else
+            OC_STAMP="$(TZ=UTC-8 date '+%Y-%m-%d %H:%M')"
+          fi
+          echo "$OC_STAMP" | grep -Eq '^20[0-9]{2}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}$' || { echo "::error::构建日期戳格式异常: [$OC_STAMP]（OWRT_DATE=$OWRT_DATE）"; exit 1; }
+          cat > files/etc/uci-defaults/98-oc-build-date <<EOF
+          #!/bin/sh
+          # 构建日期戳（编译期注入）：LuCI 概览「构建日期」运行时由此读取，避免静态 JS 被浏览器缓存锁死
+          uci -q set system.@system[0].oc_build_date="${OC_STAMP}"
+          uci -q commit system
+          exit 0
+          EOF
+          chmod 755 files/etc/uci-defaults/98-oc-build-date
+          grep -q 'oc_build_date="20' files/etc/uci-defaults/98-oc-build-date || { echo "::error::构建日期戳未写入"; exit 1; }
+          grep -q 'oc_build_date' files/www/luci-static/resources/view/status/include/10_system.js || { echo "::error::10_system.js 未改为运行时读取构建日期"; exit 1; }
+          if grep -q '__BUILD_DATE__' files/www/luci-static/resources/view/status/include/10_system.js; then echo "::error::10_system.js 仍含 __BUILD_DATE__ 占位符"; exit 1; fi
 
           # r12: rootfs 固定 896M——去掉 rc.local 首启 resize2fs 扩容（不再占满整卡 eMMC）
           sed -i -e '/remount rw/d' -e '/resize2fs/d' ./files/etc/rc.local
@@ -866,7 +887,9 @@ jobs:
           echo "PASS⑥ aria2 cbi 防护在位"
           tar -xzOf "$RFS_TAR" ./etc/diymo.sh 2>/dev/null | grep -q 'sleep 30' || { echo "::error::⑦diymo dockerd 延迟缺失"; exit 1; }
           echo "PASS⑦ diymo dockerd 延迟在位"
-          if tar -xzOf "$RFS_TAR" ./www/luci-static/resources/view/status/include/10_system.js 2>/dev/null | grep -q '__BUILD_DATE__'; then echo "::error::⑧构建日期未注入"; exit 1; else echo "PASS⑧ 构建日期已注入"; fi
+          tar -xzOf "$RFS_TAR" ./www/luci-static/resources/view/status/include/10_system.js 2>/dev/null | grep -q 'oc_build_date' || { echo "::error::⑧概览未改为运行时读取构建日期"; exit 1; }
+          tar -xzOf "$RFS_TAR" ./etc/uci-defaults/98-oc-build-date 2>/dev/null | grep -q 'oc_build_date="20' || { echo "::error::⑧构建日期戳未入包"; exit 1; }
+          echo "PASS⑧ 构建日期运行时读取（UCI 戳已入包）"
           tar -xzOf "$RFS_TAR" ./etc/uci-defaults/99-root-password 2>/dev/null | grep -q 'passwd -d root' && echo "PASS⑨ 出厂空密码脚本在位" || { echo "::error::⑨99-root-password 缺失"; exit 1; }
           if ! tar -xzOf "$RFS_TAR" ./usr/lib/lua/luci/controller/socat.lua 2>/dev/null | grep -q 'entry'; then echo "::error::⑩luci-app-socat lua 注入缺失"; exit 1; fi
           if ! tar -tzf "$RFS_TAR" | grep -qE '^\./?usr/(s?bin)/socat$'; then echo "::error::⑩socat CLI 缺失"; exit 1; fi
