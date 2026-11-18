@@ -593,6 +593,7 @@ jobs:
           exit 0
           EOF
           chmod 755 files/etc/uci-defaults/98-oc-build-date
+          echo "构建日期戳 = ${OC_STAMP}（派生自 OWRT_DATE=${OWRT_DATE}，与固件版本/发布 tag 同源）"
           grep -q 'oc_build_date="20' files/etc/uci-defaults/98-oc-build-date || { echo "::error::构建日期戳未写入"; exit 1; }
           grep -q 'oc_build_date' files/www/luci-static/resources/view/status/include/10_system.js || { echo "::error::10_system.js 未改为运行时读取构建日期"; exit 1; }
           if grep -q '__BUILD_DATE__' files/www/luci-static/resources/view/status/include/10_system.js; then echo "::error::10_system.js 仍含 __BUILD_DATE__ 占位符"; exit 1; fi
