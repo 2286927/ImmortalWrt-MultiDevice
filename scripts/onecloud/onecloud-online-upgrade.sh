@@ -85,17 +85,8 @@ for a in "$@"; do
   esac
 done
 
-# ---------------- v9.17: 升级动作审计（与 /usr/bin/upgrade 共用 /usr/lib/oc-audit.sh） ----------------
-#   现场直呼 `sh /usr/lib/oc-upgrade.sh --reboot` 也要留痕；wrapper 已 begin 过时不重复 begin。
-if [ -r /usr/lib/oc-audit.sh ]; then
-  . /usr/lib/oc-audit.sh
-  [ -n "${OC_AUDIT_SCOPE:-}" ] || oc_audit_begin upgrade "oc-upgrade.sh $*"
-else
-  oc_audit_begin(){ :; }; oc_audit_end(){ :; }; oc_audit_phase(){ :; }; oc_audit_alert(){ :; }
-fi
-
 log(){ echo "[upgrade] $*"; }
-die(){ _m="$1"; _c="${2:-1}"; echo "[upgrade][FATAL] $_m" >&2; oc_audit_end "$_c" "$_m"; exit "$_c"; }
+die(){ echo "[upgrade][FATAL] $*" >&2; exit 1; }
 
 # ---------------- 预检 ----------------
 [ "$(id -u)" = "0" ] || die "请以 root 运行"
@@ -355,23 +346,6 @@ log "备份 /etc/config、rc.local、shadow 及 boot 分区 → $BACKUP"
 cp -a /etc/config "$BACKUP/config"
 cp -a /etc/rc.local "$BACKUP/rc.local" 2>/dev/null
 cp -a /etc/shadow "$BACKUP/shadow" 2>/dev/null
-# ---------------- v9.17: 配置密封备份（fail-closed：校验不过就不写盘） ----------------
-GUARD=/usr/lib/oc-config-guard.sh
-if [ -r "$GUARD" ]; then
-  log "配置密封备份（归档 + 清单 + sha256 自校验）…"
-  if sh "$GUARD" backup "pre-upgrade" > "$BACKUP/config-guard.log" 2>&1; then
-    _arch=$(tail -n1 "$BACKUP/config-guard.log" 2>/dev/null)
-    log "密封备份通过: ${_arch:-见 $BACKUP/config-guard.log}"
-    [ -f "${_arch:-/nonexistent}" ] && cp -f "$_arch" "$BACKUP/" 2>/dev/null
-    [ -f "${_arch:-/nonexistent}.sha256" ] && cp -f "$_arch.sha256" "$BACKUP/" 2>/dev/null
-  else
-    tail -n 20 "$BACKUP/config-guard.log" 2>/dev/null | sed -e 's/^/    /' >&2
-    oc_audit_alert crit "配置密封备份失败，已中止升级（未写盘）"
-    die "配置密封备份校验失败（详见 $BACKUP/config-guard.log），已中止升级；本机未做任何修改" 7
-  fi
-else
-  log "警告: 配置守护脚本缺失（/usr/lib/oc-config-guard.sh）——本次仅做老式 cp 备份，无完整性证明"
-fi
 # v9③: boot 备份 = dd|gzip 流式压缩（FAT 分区 ~95% 空簇，256M 镜像 gzip 后约 10-20MB，
 #       232MB 可用场景也能完整备份——流式写不产生全尺寸中间文件，爆盘问题从根上消除）
 #       三层防线：① gunzip -t 完整性校验（dd 半途失败/磁盘写满都不会留坏档）
@@ -410,16 +384,6 @@ log "新 rootfs 解包约 ${RFS_MB:-?}MB（ext4 落盘约 ${RFS_NEED_MB:-?}MB）
   die "rootfs 分区剩余空间不足 200MB（当前 ${ROOT_FREE_MB}MB），请清理 /opt 或扩分区后重试"
 
 # ---------------- rootfs 覆盖（排除保留集） ----------------
-# ---------------- v9.17: 打「待核对」标记（新固件首启据此做配置核对） ----------------
-mkdir -p /opt/oc-audit 2>/dev/null
-{
-  echo "from=$(sed -e 's/[[:space:]]//g' /etc/oc-version 2>/dev/null)"
-  echo "to=${TAG_VER:-unknown}"
-  echo "ts=$TS"
-  echo "backup=$BACKUP"
-} > /opt/oc-audit/PENDING-UPGRADE 2>/dev/null
-log "已写入待核对标记 /opt/oc-audit/PENDING-UPGRADE（重启后自动核对配置）"
-oc_audit_phase prewrite "target=${TAG_VER:-unknown} backup=$BACKUP"
 log "rootfs 覆盖开始（/etc/config、rc.local、shadow、密码、密钥、证书、/opt、/root 均保留）…"
 tar -xzf "$TGZ" -C / \
   --exclude='./etc/config' \
@@ -439,7 +403,6 @@ tar -xzf "$TGZ" -C / \
   --exclude='./tmp' || die "rootfs 解包失败：系统处于混合状态（部分文件已替换为新版）。boot 分区与旧内核模块未动，此时 reboot 可回滚旧系统；请保留 $BACKUP 备份并立即反馈排障，或线刷恢复"
 sync
 log "rootfs 覆盖完成"
-oc_audit_phase write_ok "rootfs 已覆盖，等待 boot 写入"
 
 # ---------------- uhttpd/nginx 后端处理（nginx 感知） ----------------
 if [ "$PKG_HAS_UHTTPD" = "1" ]; then
@@ -545,7 +508,6 @@ log "=========================================="
 log "升级完成！目标固件内核: $PKG_KV / 后端: $([ "$PKG_HAS_NGINX" = "1" ] && echo nginx || echo uhttpd)"
 log "备份位置: $BACKUP（确认系统正常后可删除）"
 log "重启后新内核生效：reboot"
-oc_audit_phase reboot_scheduled "kv=$(uname -r)"
 if [ "$REBOOT" = "yes" ]; then
   nohup sh -c "sleep 10 && sync && reboot" >/dev/null 2>&1 &
   RB_PID=$!
