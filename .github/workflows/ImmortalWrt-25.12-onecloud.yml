@@ -595,6 +595,18 @@ jobs:
           echo "${OWRT_DATE:?OWRT_DATE 未注入!}" > files/etc/oc-version
           echo "oc-version=$(cat files/etc/oc-version)"
                     mkdir -p files/usr/bin
+          dos2unix files/usr/lib/oc-upgrade.sh files/usr/bin/upgrade
+          chmod 755 files/usr/lib/oc-upgrade.sh files/usr/bin/upgrade
+          grep -q -- '--reboot' files/usr/lib/oc-upgrade.sh || { echo "::error::oc-upgrade.sh 内置版异常"; exit 1; }
+          grep -qE '^[0-9]{2}\.[0-9]{2}\.[0-9]{2}_[0-9]{2}\.[0-9]{2}\.[0-9]{2}$' files/etc/oc-version || { echo "::error::oc-version 内容格式异常"; exit 1; }
+          test -s files/usr/bin/upgrade || { echo "::error::upgrade 命令注入失败"; exit 1; }
+          grep -q '    --check) ;;' files/usr/bin/upgrade || { echo "::error::upgrade heredoc TAB 转义损坏"; exit 1; }
+      - name: r48 生成 upgrade 外壳（审计 + 配置守护子命令）
+        working-directory: /workdir/openwrt
+        run: |
+          # 单独成步：该 heredoc 体积较大，与「加载自定义配置」同处一步会顶爆
+          # GitHub 对单步脚本的上限（实测 ~21000 字节，超限报 Exceeded max expression length）
+          mkdir -p files/usr/bin
           cat > files/usr/bin/upgrade << 'UPEOF'
           #!/bin/sh
           # r46: OneCloud 出厂在线升级命令（外壳）
@@ -670,12 +682,7 @@ jobs:
           oc_audit_end "$RC" "upgrade $*"
           exit "$RC"
           UPEOF
-          dos2unix files/usr/lib/oc-upgrade.sh files/usr/bin/upgrade
-          chmod 755 files/usr/lib/oc-upgrade.sh files/usr/bin/upgrade
-          grep -q -- '--reboot' files/usr/lib/oc-upgrade.sh || { echo "::error::oc-upgrade.sh 内置版异常"; exit 1; }
-          grep -qE '^[0-9]{2}\.[0-9]{2}\.[0-9]{2}_[0-9]{2}\.[0-9]{2}\.[0-9]{2}$' files/etc/oc-version || { echo "::error::oc-version 内容格式异常"; exit 1; }
-          test -s files/usr/bin/upgrade || { echo "::error::upgrade 命令注入失败"; exit 1; }
-          grep -q '    --check) ;;' files/usr/bin/upgrade || { echo "::error::upgrade heredoc TAB 转义损坏"; exit 1; }
+
       - name: r48 升级审计与配置守护（独立步骤，避免单步 run 触发 21000 表达式上限）
         working-directory: /workdir/openwrt
         run: |
