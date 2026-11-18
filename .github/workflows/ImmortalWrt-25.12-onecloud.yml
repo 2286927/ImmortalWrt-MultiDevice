@@ -514,6 +514,35 @@ jobs:
           grep -q 'oc_build_date="20' files/etc/uci-defaults/98-oc-build-date || { echo "::error::构建日期戳未写入"; exit 1; }
           grep -q 'oc_build_date' files/www/luci-static/resources/view/status/include/10_system.js || { echo "::error::10_system.js 未改为运行时读取构建日期"; exit 1; }
           if grep -q '__BUILD_DATE__' files/www/luci-static/resources/view/status/include/10_system.js; then echo "::error::10_system.js 仍含 __BUILD_DATE__ 占位符"; exit 1; fi
+          # r48: 升级审计 + 配置守护（root 每次 upgrade/sysupgrade 留痕；升级前密封备份、升级后自动核对）
+          mkdir -p files/usr/lib files/sbin files/etc/uci-defaults files/etc/init.d files/etc/rc.d
+          for f in oc-audit.sh oc-config-guard.sh oc-audit-watch.sh; do
+            cp -f "$GITHUB_WORKSPACE/scripts/onecloud/$f" "files/usr/lib/$f"
+          done
+          cp -f $GITHUB_WORKSPACE/scripts/onecloud/oc-audit-watch.init files/etc/init.d/oc-audit-watch
+          cp -f $GITHUB_WORKSPACE/scripts/onecloud/oc-postupgrade-check files/etc/uci-defaults/98-oc-postupgrade-check
+          chmod 755 files/usr/lib/oc-audit.sh files/usr/lib/oc-config-guard.sh files/usr/lib/oc-audit-watch.sh \
+                    files/etc/init.d/oc-audit-watch files/etc/uci-defaults/98-oc-postupgrade-check
+          ln -sf ../init.d/oc-audit-watch files/etc/rc.d/S96oc-audit-watch
+          # /sbin/sysupgrade 审计前导：LuCI「刷机/备份」页直接调 sysupgrade，升级外壳拦不到这个入口。
+          # 只在该脚本 shebang 之后插入审计与「待核对」标记，原脚本全文保留、逻辑不改。
+          SYSUP_SRC="package/base-files/files/sbin/sysupgrade"
+          if [ -f "$SYSUP_SRC" ]; then
+            sed -n '1p' "$SYSUP_SRC" > files/sbin/sysupgrade
+            cat >> files/sbin/sysupgrade <<'OCSUP'
+          . /usr/lib/oc-audit.sh 2>/dev/null || { oc_audit_begin(){ :; }; }
+          _nk=no; for _a in "$@"; do case "$_a" in -n|--nokeep|--force) _nk=yes ;; esac; done
+          oc_audit_begin sysupgrade "sysupgrade $*"
+          mkdir -p /opt/oc-audit 2>/dev/null
+          printf 'from=%s\nto=sysupgrade\nts=%s\nnokeep=%s\ncmd=sysupgrade %s\n' \
+            "$(sed -e 's/[[:space:]]//g' /etc/oc-version 2>/dev/null)" "$(date +%Y%m%d-%H%M%S)" "$_nk" "$*" \
+            > /opt/oc-audit/PENDING-UPGRADE 2>/dev/null
+          OCSUP
+            sed -n '2,$p' "$SYSUP_SRC" >> files/sbin/sysupgrade
+            chmod 755 files/sbin/sysupgrade
+          fi
+          grep -q 'oc_audit_begin sysupgrade' files/sbin/sysupgrade || { echo "::error::r48 sysupgrade 审计前导注入失败"; exit 1; }
+          [ -e files/etc/rc.d/S96oc-audit-watch ] || { echo "::error::r48 审计 watcher 未启用"; exit 1; }
 
           # r12: rootfs 固定 896M——去掉 rc.local 首启 resize2fs 扩容（不再占满整卡 eMMC）
           sed -i -e '/remount rw/d' -e '/resize2fs/d' ./files/etc/rc.local
@@ -597,26 +626,78 @@ jobs:
                     mkdir -p files/usr/bin
           cat > files/usr/bin/upgrade << 'UPEOF'
           #!/bin/sh
-          # r44: OneCloud 出厂在线升级命令
-          # 用法: upgrade --check   预检（只读不改机）
-          #       upgrade --reboot  正式升级（写入完成约 10 秒自动重启）
-          SRC="https://raw.githubusercontent.com/2286927/ImmortalWrt-MultiDevice/main/scripts/onecloud/onecloud-online-upgrade.sh"
+          # r46: OneCloud 出厂在线升级命令（外壳）
+          # 用法:
+          #   upgrade --status                 查看本机版本 / 最近备份 / 缓存包 / 上次结果（只读，不联网）
+          #   upgrade --check --no-download    只做版本与空间核算，不下载任何包（约 3 秒）
+          #   upgrade --check                  完整预检（会把升级包下载到 /opt，约 163MB）
+          #   upgrade --check --force          跳过版本比较，强制走完整预检
+          #   upgrade --reboot                 正式升级（写入完成约 10 秒自动重启）
+          #   upgrade --reboot --force         同版本强制重刷
+          #   upgrade --clean                  清理 /opt/rfs-upgrade 缓存包
+          #
+          # r48 审计与配置守护（每次调用都留痕：时间/命令/会话/结果）:
+          #   upgrade --audit [N]              查看最近 N 条审计（默认 20，JSONL）
+          #   upgrade --postflight [--restore] 升级后配置核对（--restore 缺项自动补齐）
+          #   upgrade --backup-config [tag]    手工做一次密封备份（归档+清单+sha256 自校验）
+          #   upgrade --backups                列出历史密封备份及校验状态
+          #   upgrade --restore-config [arch] [--all|--missing]  恢复配置（默认只补缺项）
+          # 退出码: 0=成功 1=其它 2=参数/并发错 3=探测失败 4=空间不足 5=下载失败 6=校验失败 7=备份失败
+          #
+          # r45 双仓分离：源码仓为 private、固件仓只承载 Release 资产，两处都取不到 raw 脚本。
+          # 原实现每次先 wget 在线脚本再回退内置，实际必然 404 白等 15 秒超时，故直接用内置版。
+          # r46（v9.15）: 补 --url / --status / --clean / --help 四个分支。
+          GUARD="/usr/lib/oc-config-guard.sh"
           DST="/tmp/oc-upgrade.sh"
+
+          # 审计库（缺失时降级为无痕，不影响升级可用性）
+          if [ -r /usr/lib/oc-audit.sh ]; then
+              . /usr/lib/oc-audit.sh
+          else
+              oc_audit_begin(){ :; }; oc_audit_end(){ :; }; oc_audit_alert(){ :; }
+          fi
+
+          # ---- 审计/守护子命令（不联网、不改系统） ----
+          case "$1" in
+              --audit)
+                  if [ -f /opt/oc-audit/upgrade-audit.jsonl ]; then tail -n "${2:-20}" /opt/oc-audit/upgrade-audit.jsonl
+                  else echo "无审计记录"; fi
+                  exit 0 ;;
+              --postflight)     shift; [ -r "$GUARD" ] || { echo "配置守护脚本缺失"; exit 1; }; sh "$GUARD" postflight "$@"; exit $? ;;
+              --restore-config) shift; [ -r "$GUARD" ] || { echo "配置守护脚本缺失"; exit 1; }; sh "$GUARD" restore "$@"; exit $? ;;
+              --backup-config)  shift; [ -r "$GUARD" ] || { echo "配置守护脚本缺失"; exit 1; }; sh "$GUARD" backup "${1:-manual}"; exit $? ;;
+              --backups)        [ -r "$GUARD" ] || { echo "配置守护脚本缺失"; exit 1; }; sh "$GUARD" list; exit 0 ;;
+          esac
+
           case "$1" in
               --check) ;;
               --reboot) ;;
-              *) echo "用法: upgrade --check | upgrade --reboot"; exit 1 ;;
+              --force|--url=*) ;;
+              --url) ;;
+              --no-download|--dry-run) ;;
+              --status) ;;
+              --clean) ;;
+              -h|--help|help) echo "用法: upgrade --status | --check [--force] [--no-download] | --reboot [--force] | --clean | --url=<资产URL> | --audit N | --postflight [--restore] | --backup-config | --backups | --restore-config"; exit 0 ;;
+              *) echo "用法: upgrade --status | --check [--force] [--no-download] | --reboot [--force] | --clean | --url=<资产URL> | --audit N | --postflight [--restore] | --backup-config | --backups | --restore-config"; exit 2 ;;
           esac
-          rm -f "$DST"
-          if wget -q -T 15 -O "$DST" "$SRC" && [ -s "$DST" ]; then
-              echo "已拉取最新升级脚本"
-          elif [ -s /usr/lib/oc-upgrade.sh ]; then
-              cp /usr/lib/oc-upgrade.sh "$DST"
-              echo "在线拉取失败，使用出厂内置升级脚本"
-          else
-              echo "升级脚本不可用（在线拉取失败且无内置版本）"; exit 1
+
+          if [ ! -s /usr/lib/oc-upgrade.sh ]; then
+              echo "升级脚本不可用（出厂内置版本缺失）"; oc_audit_end 1 "内置升级脚本缺失"; exit 1
           fi
-          exec sh "$DST" "$@"
+
+          oc_audit_begin upgrade "upgrade $*"
+
+          rm -f "$DST".tmp.* 2>/dev/null
+          # 原子替换：旧版是 rm -f + cp，两个实例并发时会把对方正在执行的脚本文件删掉
+          # （BusyBox sh 边读边执行，文件被删/换会读到半截）。mv 是原子的，在跑的实例持有原 inode 不受影响。
+          cp /usr/lib/oc-upgrade.sh "$DST.tmp.$$" || { echo "无法写入升级脚本（/tmp 不可写？）"; oc_audit_end 1 "写入 $DST 失败"; exit 1; }
+          mv -f "$DST.tmp.$$" "$DST"
+
+          # r48: 不再 exec —— 需要拿到退出码写审计尾记录（--reboot 时内层已后台重启，这里拿到的是排程结果）
+          sh "$DST" "$@"
+          RC=$?
+          oc_audit_end "$RC" "upgrade $*"
+          exit "$RC"
           UPEOF
           dos2unix files/usr/lib/oc-upgrade.sh files/usr/bin/upgrade
           chmod 755 files/usr/lib/oc-upgrade.sh files/usr/bin/upgrade
@@ -890,6 +971,13 @@ jobs:
           tar -xzOf "$RFS_TAR" ./www/luci-static/resources/view/status/include/10_system.js 2>/dev/null | grep -q 'oc_build_date' || { echo "::error::⑧概览未改为运行时读取构建日期"; exit 1; }
           tar -xzOf "$RFS_TAR" ./etc/uci-defaults/98-oc-build-date 2>/dev/null | grep -q 'oc_build_date="20' || { echo "::error::⑧构建日期戳未入包"; exit 1; }
           echo "PASS⑧ 构建日期运行时读取（UCI 戳已入包）"
+          # ⑭ r48: 升级审计与配置守护入包断言（缺一即中止，避免"纸面方案"进固件）
+          tar -tzf "$RFS_TAR" | grep -q '^\./usr/lib/oc-config-guard.sh$' || { echo "::error::⑭ 配置守护脚本未入包"; exit 1; }
+          tar -tzf "$RFS_TAR" | grep -q '^\./usr/lib/oc-audit.sh$' || { echo "::error::⑭ 审计库未入包"; exit 1; }
+          tar -tzf "$RFS_TAR" | grep -q '^\./etc/uci-defaults/98-oc-postupgrade-check$' || { echo "::error::⑭ 升级后配置核对脚本未入包"; exit 1; }
+          tar -tzf "$RFS_TAR" | grep -q '^\./etc/init.d/oc-audit-watch$' || { echo "::error::⑭ 审计 watcher 未入包"; exit 1; }
+          tar -xzOf "$RFS_TAR" ./sbin/sysupgrade 2>/dev/null | grep -q 'oc_audit_begin sysupgrade' || { echo "::error::⑭ sysupgrade 审计前导未入包"; exit 1; }
+          echo "PASS⑭ 升级审计/配置守护入包"
           tar -xzOf "$RFS_TAR" ./etc/uci-defaults/99-root-password 2>/dev/null | grep -q 'passwd -d root' && echo "PASS⑨ 出厂空密码脚本在位" || { echo "::error::⑨99-root-password 缺失"; exit 1; }
           if ! tar -xzOf "$RFS_TAR" ./usr/lib/lua/luci/controller/socat.lua 2>/dev/null | grep -q 'entry'; then echo "::error::⑩luci-app-socat lua 注入缺失"; exit 1; fi
           if ! tar -tzf "$RFS_TAR" | grep -qE '^\./?usr/(s?bin)/socat$'; then echo "::error::⑩socat CLI 缺失"; exit 1; fi
