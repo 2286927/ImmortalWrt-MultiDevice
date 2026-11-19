@@ -58,18 +58,20 @@ get_mirrors() { # 输出候选（每行一个；"-"=直连）
         auto|"")
             # 上次成功的镜像优先（重启后记忆失效，重新探测）
             [ -s "$MIRROR_MEM_FILE" ] && cat "$MIRROR_MEM_FILE"
-            # 由 autoupdate-maint 自动维护（2026-11-13，设备侧 10MB 分段实测，快→慢）
-            #   ghfast.top                   1268 KB/s
-            #   ghproxy.imciel.com           1088 KB/s
-            #   gh.monlor.com                 990 KB/s
-            #   gh-proxy.org                  621 KB/s
-            #   gh-proxy.com                  121 KB/s
+            # 由 autoupdate-maint 自动维护（2026-11-20，设备侧 10MB 分段实测，快→慢）
+            #   gh-proxy.com                11793 KB/s
+            #   ghfast.top                   4190 KB/s
+            #   gh-proxy.org                 3752 KB/s
+            #   gh.monlor.com                3718 KB/s
+            #   ghproxy.imciel.com           3211 KB/s
+            #   ghproxy.net                  1003 KB/s
             printf '%s\n' \
-                "https://ghfast.top/" \
-                "https://ghproxy.imciel.com/" \
-                "https://gh.monlor.com/" \
-                "https://gh-proxy.org/" \
                 "https://gh-proxy.com/" \
+                "https://ghfast.top/" \
+                "https://gh-proxy.org/" \
+                "https://gh.monlor.com/" \
+                "https://ghproxy.imciel.com/" \
+                "https://ghproxy.net/" \
                 "-"
             ;;
         *) # 自定义加速前缀优先，失败回退直连
