@@ -742,6 +742,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@main
         with:
+          retention-days: 3
           name: compile-log-${{ env.DEVICE_MODEL }}
           path: |
             openwrt/build_dir/**/log/*.log
@@ -858,19 +859,7 @@ jobs:
           echo ">>> 值守升级固定资产："
           ls -l "$AU_DIR"/autoupdate-* || true
 
-      - name: 上传 bin
-        uses: actions/upload-artifact@main
-        if: steps.compile.outputs.status == 'success' && github.event_name == 'workflow_dispatch' && env.UPLOAD_BIN_DIR == 'true'
-        with:
-          name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-          path: openwrt/bin
 
-      - name: 上传 packages
-        uses: actions/upload-artifact@main
-        if: steps.compile.outputs.status == 'success' && github.event_name == 'workflow_dispatch' && env.UPLOAD_PACKAGES_DIR == 'true'
-        with:
-          name: OpenWrt_packages${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-          path: ${{ github.workspace }}/packages
 
       - name: 生成标签和发布描述
         id: tag

@@ -741,6 +741,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7.0.2
         with:
+          retention-days: 3
           name: compile-log-${{ env.DEVICE_MODEL }}
           path: |
             openwrt/build_dir/**/log/*.log
@@ -852,24 +853,13 @@ jobs:
         if: steps.compile.outputs.status == 'success'
         uses: actions/upload-artifact@v7.0.2
         with:
+          retention-days: 1
           name: octopus-rootfs-25.12
           # 25.12 树会同时产出 immortalwrt-...-rootfs.tar.gz 与 immortalwrt-...-targz-rootfs.tar.gz（同内容双命名），
           # 宽匹配会把两个包都打进 artifact，flippy job 下载后 cp 多源失败（fc9cee41b1 修复，勿改回宽匹配）
           path: openwrt/bin/targets/armsr/armv8/*armv8-generic-rootfs.tar.gz
 
-      - name: 上传 bin
-        uses: actions/upload-artifact@v7.0.2
-        if: steps.compile.outputs.status == 'success' && github.event_name == 'workflow_dispatch' && env.UPLOAD_BIN_DIR == 'true'
-        with:
-          name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-          path: openwrt/bin
 
-      - name: 上传 packages
-        uses: actions/upload-artifact@v7.0.2
-        if: steps.compile.outputs.status == 'success' && github.event_name == 'workflow_dispatch' && env.UPLOAD_PACKAGES_DIR == 'true'
-        with:
-          name: OpenWrt_packages${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-          path: ${{ github.workspace }}/packages
 
       - name: 生成标签和发布描述
         id: tag

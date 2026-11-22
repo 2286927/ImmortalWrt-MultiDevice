@@ -460,7 +460,7 @@ jobs:
           path: |
             openwrt/build.log
             openwrt/.config
-          retention-days: 7
+          retention-days: 3
           if-no-files-found: warn
 
       - name: 制作直刷包
@@ -487,12 +487,6 @@ jobs:
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           ls -lh $PWD
 
-      - name: 上传 artifacts
-        uses: actions/upload-artifact@main
-        with:
-          name: onecloud-${{ env.REPO_BRANCH }}-${{ env.OWRT_DATE }}
-          path: openwrt/outfile/*
-          retention-days: 15
 
       - name: 上传直刷固件
         uses: ncipollo/release-action@v1

@@ -885,7 +885,7 @@ jobs:
             openwrt/build.log
             openwrt/kernel.log
             openwrt/.config
-          retention-days: 7
+          retention-days: 3
           if-no-files-found: warn
 
       - name: r36 终检（线刷病灶八断言）
@@ -955,20 +955,6 @@ jobs:
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           ls -lh $PWD
 
-      - name: 上传 artifacts
-        # r57（对齐 UP r57）：账号 Actions 存储配额曾被打满（run 42954571276：Failed to CreateArtifact:
-        #   Artifact storage quota has been hit），原实现该步失败会连带跳过「上传直刷固件」「发布到固件仓」。
-        #   ① 保留期 15→3 天（404MB/次，Release 与固件仓已完整留档）；
-        #   ② 失败不阻断，配额满只丢 artifact；
-        #   ③ 产物体已是 xz/gz，compression-level: 0 免二次压缩。
-        continue-on-error: true
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: onecloud-${{ env.REPO_BRANCH }}-${{ env.OWRT_DATE }}
-          path: openwrt/outfile/*
-          retention-days: 3
-          compression-level: 0
-          if-no-files-found: warn
 
       - name: 上传直刷固件
         uses: ncipollo/release-action@v1
