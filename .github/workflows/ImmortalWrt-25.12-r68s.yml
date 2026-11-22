@@ -13,16 +13,6 @@ on:
       #   required: true
       #   options:
       #     - r68s
-      upload_bin_dir:
-        description: '上传 bin 目录'
-        type: boolean
-        required: true
-        default: true
-      upload_packages_dir:
-        description: '上传 packages 目录'
-        type: boolean
-        required: true
-        default: false
       upload_all_files:
         description: '上传所有固件文件'
         type: boolean
@@ -92,8 +82,6 @@ env:
   CONFIG_FILE: ${{ github.event.inputs.config_file || 'r68s-25.12.config' }}
   DIY_P1_SH: scripts/25.12/diy-part1.sh
   DIY_P2_SH: scripts/25.12/diy-part2.sh
-  UPLOAD_BIN_DIR: ${{ github.event.inputs.upload_bin_dir }}
-  UPLOAD_PACKAGES_DIR: ${{ github.event.inputs.upload_packages_dir }}
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
@@ -196,8 +184,6 @@ jobs:
           echo "EVENT_TRIGGER_METHOD=${{ github.event_name }}" >> $GITHUB_ENV
 
           echo "设备型号: $DEVICE_MODEL"
-          echo "上传 bin 目录: $UPLOAD_BIN_DIR"
-          echo "上传 packages 目录: $UPLOAD_PACKAGES_DIR"
 
       - name: 扩大磁盘空间
         uses: easimon/maximize-build-space@v10
