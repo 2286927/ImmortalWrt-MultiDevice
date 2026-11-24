@@ -619,7 +619,7 @@ fi
 # 为什么 clone 而不是把源码复制进本仓：包仓已是 public，clone 拿到就是发版那个
 # tag，不会出现「固件里是旧版」；换版本只改 DNS_SWITCH_REF。
 if [[ "${DEVICE_MODEL:-}" == "r68s" ]]; then
-    DNS_SWITCH_REF="${DNS_SWITCH_REF:-v1.0.0}"
+    DNS_SWITCH_REF="${DNS_SWITCH_REF:-v1.0.1}"
     DNS_SWITCH_REPO="${DNS_SWITCH_REPO:-https://github.com/2286927/luci-app-dns-switch.git}"
     DNS_SWITCH_DIR="package/luci-app-dns-switch"
 
